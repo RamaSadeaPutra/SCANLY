@@ -1,0 +1,3 @@
+ID=08
+Nama=ramah
+Folder=C:\Scanly\faces\ramah
