@@ -1099,7 +1099,7 @@ def load_people():
 
                 rows.append({
                     "ID": row.get("ID", "").strip(),
-                    "Nama": row.get("Nama", "").strip(),
+                    "Nama": str(row.get("Nama") or "").strip(),
                     "Folder": row.get("Folder", "").strip(),
                     "Status": row.get("Status", "Aktif").strip(),
                 })
@@ -1170,12 +1170,12 @@ def load_attendance():
             for row in reader:
 
                 rows.append({
-                    "Nama": row.get("Nama", "").strip(),
-                    "Tanggal": row.get("Tanggal", "").strip(),
-                    "Jam": row.get("Jam", "").strip(),
-                    "Skor": row.get("Skor", "").strip(),
-                    "Status": row.get("Status", "").strip(),
-                    "Keterangan": row.get("Keterangan", "").strip(),
+                    "Nama": str(row.get("Nama") or "").strip(),
+                    "Tanggal": str(row.get("Tanggal") or "").strip(),
+                    "Jam": str(row.get("Jam") or "").strip(),
+                    "Skor": str(row.get("Skor") or "").strip(),
+                    "Status": str(row.get("Status") or "").strip(),
+                    "Keterangan": str(row.get("Keterangan") or "").strip(),
                 })
 
     except Exception as error:
@@ -1247,6 +1247,24 @@ def working_days_in_month(year, month, holidays=None):
     return total
 
 
+def elapsed_working_days_in_month(year, month, holidays=None, reference_date=None):
+    """Hari kerja yang sudah terjadi untuk bulan berjalan; penuh untuk bulan lampau."""
+    holidays = holidays if holidays is not None else load_holidays()
+    today = reference_date or datetime.now().date()
+
+    if (year, month) < (today.year, today.month):
+        return working_days_in_month(year, month, holidays)
+    if (year, month) > (today.year, today.month):
+        return 0
+
+    total = 0
+    for day_number in range(1, today.day + 1):
+        day = datetime(year, month, day_number).date()
+        if is_working_day(day, holidays):
+            total += 1
+    return total
+
+
 def attendance_status_is_present(status):
     value = str(status or "").strip().lower()
     return value in {
@@ -1258,6 +1276,7 @@ def attendance_status_is_present(status):
 
 
 def monthly_person_summary(name, year, month, attendance, holidays=None):
+    """Hitung rekap berdasarkan total hari kerja penuh pada bulan yang dipilih."""
     holidays = holidays if holidays is not None else load_holidays()
     working = working_days_in_month(year, month, holidays)
 
@@ -4559,80 +4578,151 @@ class AdminWindow(QMainWindow):
         date_text = saved_at.strftime("%Y-%m-%d")
         time_text = saved_at.strftime("%H:%M:%S")
 
-        # Jangan membuat dua status pada tanggal yang sama untuk orang yang sama.
+        # ====================================================
+        # CEK DATA HARI INI
+        # ====================================================
+        # Untuk MASUK: tanggal yang sudah punya data masuk tidak boleh
+        # dibuat ulang, kecuali data tersebut hanya Tanpa Keterangan
+        # otomatis yang sedang dikoreksi.
+        #
+        # Untuk PULANG: data masuk pada tanggal yang sama justru wajib
+        # dipertahankan. Yang dicek hanya apakah sudah ada data Pulang.
         existing = [
             row for row in self.attendance
-            if row.get("Nama", "").strip() == name
-            and row.get("Tanggal", "").strip() == date_text
+            if str(row.get("Nama") or "").strip() == name
+            and str(row.get("Tanggal") or "").strip() == date_text
         ]
 
-        if existing:
-            # Status otomatis Tanpa Keterangan boleh dikoreksi admin
-            # menjadi Hadir/Izin/Sakit.
-            auto_rows = [
-                row for row in existing
-                if str(row.get("Status", "")).strip().lower()
-                in {"tanpa keterangan", "tanpa_keterangan", "alpha", "alpa"}
-            ]
+        existing_statuses = {
+            str(row.get("Status") or "").strip().lower()
+            for row in existing
+        }
 
-            if not auto_rows:
+        if status == "Pulang":
+            # Absen pulang harus ditambahkan sebagai baris baru pada
+            # tanggal yang sama. Jangan blokir hanya karena sudah ada
+            # absen masuk.
+            if "pulang" in existing_statuses:
                 QMessageBox.warning(
                     self,
-                    "Tanggal Sudah Memiliki Data",
+                    "Sudah Absen Pulang",
                     (
-                        f"{name} sudah memiliki data presensi pada "
+                        f"{name} sudah memiliki data absen pulang "
+                        f"pada {date_text}."
+                    ),
+                )
+                return
+
+            # Pastikan memang sudah ada absen masuk.
+            entry_statuses = {
+                "tepat waktu",
+                "terlambat",
+                "hadir",
+            }
+            has_entry = any(
+                value in entry_statuses
+                for value in existing_statuses
+            )
+
+            if not has_entry:
+                QMessageBox.warning(
+                    self,
+                    "Belum Absen Masuk",
+                    (
+                        f"{name} belum memiliki absen masuk pada "
                         f"{date_text}.\n\n"
+                        "Absen pulang hanya dapat dilakukan setelah "
+                        "absen masuk."
+                    ),
+                )
+                return
+
+        else:
+            # Untuk absen masuk, data yang sudah ada menjadi penghalang,
+            # kecuali baris tersebut hanyalah Tanpa Keterangan otomatis.
+            entry_statuses = {
+                "tepat waktu",
+                "terlambat",
+                "hadir",
+            }
+            has_entry = any(
+                value in entry_statuses
+                for value in existing_statuses
+            )
+
+            if has_entry:
+                QMessageBox.warning(
+                    self,
+                    "Sudah Absen Masuk",
+                    (
+                        f"{name} sudah memiliki data absen masuk "
+                        f"pada {date_text}.\n\n"
                         "Gunakan Riwayat Presensi untuk memeriksanya."
                     ),
                 )
                 return
 
-            try:
-                # Hapus baris otomatis pada tanggal tersebut, kemudian
-                # simpan status manual penggantinya.
-                rows = load_attendance()
-                kept = [
-                    row for row in rows
-                    if not (
-                        row.get("Nama", "").strip() == name
-                        and row.get("Tanggal", "").strip() == date_text
-                        and row.get("Status", "").strip().lower()
-                        in {
-                            "tanpa keterangan",
-                            "tanpa_keterangan",
-                            "alpha",
-                            "alpa",
-                        }
-                    )
-                ]
+            auto_rows = [
+                row for row in existing
+                if str(row.get("Status") or "").strip().lower()
+                in {
+                    "tanpa keterangan",
+                    "tanpa_keterangan",
+                    "alpha",
+                    "alpa",
+                }
+            ]
 
-                with open(
-                    ATTENDANCE_FILE,
-                    "w",
-                    newline="",
-                    encoding="utf-8-sig",
-                ) as file:
-                    writer = csv.DictWriter(
-                        file,
-                        fieldnames=[
-                            "Nama",
-                            "Tanggal",
-                            "Jam",
-                            "Skor",
-                            "Status",
-                            "Keterangan",
-                        ],
-                    )
-                    writer.writeheader()
-                    writer.writerows(kept)
+            if auto_rows:
+                try:
+                    # Hapus hanya baris Tanpa Keterangan otomatis,
+                    # lalu ganti dengan status manual yang sebenarnya.
+                    rows = load_attendance()
+                    kept = [
+                        row for row in rows
+                        if not (
+                            str(row.get("Nama") or "").strip() == name
+                            and str(row.get("Tanggal") or "").strip() == date_text
+                            and str(row.get("Status") or "").strip().lower()
+                            in {
+                                "tanpa keterangan",
+                                "tanpa_keterangan",
+                                "alpha",
+                                "alpa",
+                            }
+                        )
+                    ]
 
-            except Exception as error:
-                QMessageBox.critical(
-                    self,
-                    "Gagal Memperbarui",
-                    f"Data Tanpa Keterangan tidak dapat dikoreksi.\n\n{error}",
-                )
-                return
+                    with open(
+                        ATTENDANCE_FILE,
+                        "w",
+                        newline="",
+                        encoding="utf-8-sig",
+                    ) as file:
+                        writer = csv.DictWriter(
+                            file,
+                            fieldnames=[
+                                "Nama",
+                                "Tanggal",
+                                "Jam",
+                                "Skor",
+                                "Status",
+                                "Keterangan",
+                            ],
+                        )
+                        writer.writeheader()
+                        writer.writerows(kept)
+
+                except Exception as error:
+                    QMessageBox.critical(
+                        self,
+                        "Gagal Memperbarui",
+                        (
+                            "Data Tanpa Keterangan tidak dapat "
+                            f"dikoreksi.\n\n{error}"
+                        ),
+                    )
+                    return
 
         try:
             ensure_attendance_schema()
@@ -6276,7 +6366,7 @@ class AdminWindow(QMainWindow):
         combo.clear()
 
         now = datetime.now()
-        for offset in range(-11, 2):
+        for offset in range(-11, 1):
             year = now.year
             month = now.month + offset
 
@@ -6291,7 +6381,7 @@ class AdminWindow(QMainWindow):
             label = f"{calendar.month_name[month]} {year}"
             combo.addItem(label, (year, month))
 
-        # Current month is the last item.
+        # Bulan berjalan menjadi pilihan terakhir; bulan berikutnya tidak ditampilkan.
         combo.setCurrentIndex(combo.count() - 1)
         combo.blockSignals(False)
 
@@ -6417,7 +6507,7 @@ class AdminWindow(QMainWindow):
 
         year, month = period
         holidays = load_holidays()
-        workdays = working_days_in_month(
+        workdays = elapsed_working_days_in_month(
             year, month, holidays
         )
 
@@ -6475,9 +6565,15 @@ class AdminWindow(QMainWindow):
             )
         )
 
+        period_note = (
+            "hari kerja berjalan"
+            if (year, month) == (datetime.now().year, datetime.now().month)
+            else "hari kerja"
+        )
+
         self.dashboard_month_info.setText(
             f"{month_name} {year} • "
-            f"{workdays} hari kerja • "
+            f"{workdays} {period_note} • "
             f"{holiday_count} hari libur"
         )
 

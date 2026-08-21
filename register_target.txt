@@ -1,3 +1,3 @@
-ID=0934
-Nama=Risna
-Folder=C:\Scanly\faces\Risna
+ID=0921
+Nama=Rama Sadea
+Folder=C:\Scanly\faces\Rama_Sadea
