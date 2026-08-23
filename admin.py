@@ -5,11 +5,13 @@ import shutil
 import re
 import subprocess
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
+import calendar
 
 from main import ScanlyWindow
 
 from PySide6.QtCore import (
+    QTimer,
     Qt,
     QProcess,
     QDate,
@@ -17,18 +19,334 @@ from PySide6.QtCore import (
 )
 
 from PySide6.QtGui import (
+    QColor,
     QPixmap,
     QImage,
     QPainter,
     QFont,
 )
 
+from PySide6.QtWidgets import QDateEdit, QAbstractButton, QWidget
+
 try:
     from PySide6.QtSvg import QSvgRenderer
 except Exception:
     QSvgRenderer = None
 
+
+
+
+class ScanlyDateEdit(QDateEdit):
+    """
+    Date field memakai bentuk yang sama dengan ScanlySelectBox:
+    putih, teks tanggal hitam, separator abu-abu, dan ▼ tetap abu-abu.
+    Klik di seluruh field membuka kalender.
+    """
+
+    BUTTON_WIDTH = 92
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        self.setCursor(Qt.PointingHandCursor)
+        self.setReadOnly(True)
+        self.setCalendarPopup(True)
+
+        line_edit = self.lineEdit()
+        if line_edit is not None:
+            line_edit.setReadOnly(True)
+            line_edit.setReadOnly(True)
+            line_edit.setStyleSheet(
+                "background: transparent; border: none; color: transparent;"
+                "selection-color: transparent; selection-background-color: transparent;"
+            )
+            line_edit.setAttribute(
+                Qt.WA_TransparentForMouseEvents,
+                True,
+            )
+            line_edit.hide()
+
+        self.dateChanged.connect(self.update)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+
+        rect = self.rect()
+
+        painter.setPen(QColor("#b8c0ca"))
+        painter.setBrush(QColor("#ffffff"))
+        painter.drawRoundedRect(
+            rect.adjusted(0, 0, -1, -1),
+            8,
+            8,
+        )
+
+        text_rect = rect.adjusted(
+            12,
+            0,
+            -(self.BUTTON_WIDTH + 8),
+            0,
+        )
+
+        # Hanya isi/date text yang diubah menjadi hitam.
+        painter.setPen(QColor("#111827"))
+        font = painter.font()
+        font.setPointSize(10)
+        painter.setFont(font)
+
+        value = self.date().toString("dd/MM/yyyy")
+        painter.drawText(
+            text_rect,
+            Qt.AlignVCenter | Qt.AlignLeft,
+            value,
+        )
+
+        # Divider tetap warna lama.
+        divider_x = rect.right() - self.BUTTON_WIDTH
+        painter.setPen(QColor("#b8c0ca"))
+        painter.drawLine(
+            divider_x,
+            rect.top() + 1,
+            divider_x,
+            rect.bottom() - 1,
+        )
+
+        # ▼ tetap warna lama.
+        button_rect = rect.adjusted(
+            divider_x - rect.left() + 1,
+            0,
+            0,
+            0,
+        )
+
+        painter.setPen(QColor("#b8c0ca"))
+        button_font = painter.font()
+        button_font.setBold(False)
+        painter.setFont(button_font)
+        painter.drawText(
+            button_rect,
+            Qt.AlignCenter,
+            "▼",
+        )
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.open_calendar_popup()
+            event.accept()
+            return
+
+        super().mousePressEvent(event)
+
+    def open_calendar_popup(self):
+        self.setCalendarPopup(True)
+
+        calendar = self.calendarWidget()
+        if calendar is None:
+            return
+
+        calendar.setSelectedDate(self.date())
+
+        popup = calendar.window()
+
+        if popup.width() < 250 or popup.height() < 180:
+            popup.resize(360, 300)
+
+        global_pos = self.mapToGlobal(
+            self.rect().bottomLeft()
+        )
+
+        popup.move(
+            global_pos.x(),
+            global_pos.y() + 4,
+        )
+
+        popup.show()
+        popup.raise_()
+        popup.activateWindow()
+        calendar.setFocus(Qt.OtherFocusReason)
+
+
+def setup_white_date_picker(date_edit):
+    """Apply consistent white styling to the field and calendar popup."""
+    date_edit.setStyleSheet("""
+        QDateEdit {
+            background-color: #ffffff;
+            color: #111827;
+            border: 1px solid #d1d5db;
+            border-radius: 8px;
+            padding: 9px 34px 9px 12px;
+            min-height: 22px;
+        }
+        QDateEdit:hover {
+            border-color: #9ca3af;
+        }
+        QDateEdit:focus {
+            background-color: #ffffff;
+            color: #111827;
+            border: 1px solid #2563eb;
+        }
+        QDateEdit::drop-down {
+            width: 0px;
+            border: none;
+            background: transparent;
+        }
+    """)
+
+    date_edit.setReadOnly(True)
+    date_edit.setCalendarPopup(True)
+    date_edit.setCursor(Qt.PointingHandCursor)
+
+    calendar = date_edit.calendarWidget()
+    calendar.setStyleSheet("""
+        QCalendarWidget {
+            background: #ffffff;
+            color: #111827;
+            border: 1px solid #d1d5db;
+        }
+        QWidget#qt_calendar_navigationbar {
+            background: #ffffff;
+            color: #111827;
+        }
+        QToolButton#qt_calendar_prevmonth,
+        QToolButton#qt_calendar_nextmonth,
+        QToolButton#qt_calendar_monthbutton,
+        QToolButton#qt_calendar_yearbutton {
+            background: #ffffff;
+            color: #111827;
+            border: none;
+            padding: 6px;
+        }
+        QToolButton#qt_calendar_prevmonth:hover,
+        QToolButton#qt_calendar_nextmonth:hover,
+        QToolButton#qt_calendar_monthbutton:hover,
+        QToolButton#qt_calendar_yearbutton:hover {
+            background: #f3f4f6;
+            color: #111827;
+        }
+        QSpinBox#qt_calendar_yearedit {
+            background: #ffffff;
+            color: #111827;
+            border: 1px solid #d1d5db;
+        }
+        QAbstractItemView#qt_calendar_calendarview {
+            background: #ffffff;
+            color: #111827;
+            selection-background-color: #2563eb;
+            selection-color: #ffffff;
+            alternate-background-color: #f9fafb;
+            outline: none;
+        }
+        QAbstractItemView#qt_calendar_calendarview::item {
+            background: #ffffff;
+            color: #111827;
+            padding: 4px;
+        }
+        QAbstractItemView#qt_calendar_calendarview::item:hover {
+            background: #e5e7eb;
+            color: #111827;
+        }
+        QAbstractItemView#qt_calendar_calendarview::item:selected {
+            background: #2563eb;
+            color: #ffffff;
+        }
+    """)
+
+    def force_white(widget):
+        palette = widget.palette()
+        role = palette.ColorRole
+        palette.setColor(role.Window, QColor("#ffffff"))
+        palette.setColor(role.Base, QColor("#ffffff"))
+        palette.setColor(role.AlternateBase, QColor("#f9fafb"))
+        palette.setColor(role.Text, QColor("#111827"))
+        palette.setColor(role.WindowText, QColor("#111827"))
+        palette.setColor(role.Button, QColor("#ffffff"))
+        palette.setColor(role.ButtonText, QColor("#111827"))
+        palette.setColor(role.Highlight, QColor("#2563eb"))
+        palette.setColor(role.HighlightedText, QColor("#ffffff"))
+        widget.setPalette(palette)
+        widget.setAutoFillBackground(True)
+
+    force_white(calendar)
+
+    for child in calendar.findChildren(QWidget):
+        force_white(child)
+
+    popup = calendar.window()
+    if popup is not calendar:
+        popup.setStyleSheet("QWidget { background: #ffffff; color: #111827; }")
+        force_white(popup)
+
+    return date_edit
+
+
+
+COMBO_LIGHT_STYLE = """
+QComboBox {
+    background-color: #ffffff;
+    color: #111827;
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    padding: 9px 34px 9px 12px;
+    min-height: 22px;
+}
+QComboBox:hover { border-color: #9ca3af; }
+QComboBox:focus {
+    background-color: #ffffff;
+    color: #111827;
+    border: 1px solid #2563eb;
+}
+QComboBox::drop-down { width: 0px; border: none; background: transparent; }
+QComboBox QAbstractItemView {
+    background-color: #ffffff;
+    color: #111827;
+    border: 1px solid #d1d5db;
+    selection-background-color: #e5edff;
+    selection-color: #111827;
+    outline: none;
+}
+QComboBox QAbstractItemView::item {
+    background-color: #ffffff;
+    color: #111827;
+    padding: 8px 10px;
+    min-height: 28px;
+}
+QComboBox QAbstractItemView::item:hover {
+    background-color: #f3f4f6;
+    color: #111827;
+}
+QComboBox QAbstractItemView::item:selected {
+    background-color: #e5edff;
+    color: #111827;
+}
+"""
+
+
+DATE_FIELD_STYLE = """
+QDateEdit {
+    background-color: #ffffff;
+    color: #111827;
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    padding: 9px 34px 9px 12px;
+    min-height: 22px;
+}
+QDateEdit:hover { border-color: #9ca3af; }
+QDateEdit:focus {
+    background-color: #ffffff;
+    color: #111827;
+    border: 1px solid #2563eb;
+}
+QDateEdit::drop-down {
+    width: 0px;
+    border: none;
+    background: transparent;
+}
+"""
+
 from PySide6.QtWidgets import (
+    QGridLayout,
+    QAbstractButton,
     QApplication,
     QMainWindow,
     QWidget,
@@ -55,6 +373,128 @@ from PySide6.QtWidgets import (
     QTimeEdit,
 )
 
+
+class ScanlySelectBox(QComboBox):
+    """
+    Dropdown bergaya input + tombol:
+    [ nilai terpilih                              |  Pilih ]
+    Background putih, teks hitam, divider hitam.
+    Klik seluruh field tetap membuka popup QComboBox standar.
+    """
+
+    BUTTON_WIDTH = 92
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setMinimumHeight(40)
+        self.setStyleSheet("""
+            QComboBox {
+                background: #ffffff;
+                color: #111827;
+                border: 1px solid #b8c0ca;
+                border-radius: 8px;
+                padding: 0px;
+                min-height: 40px;
+            }
+            QComboBox:focus {
+                border: 1px solid #111827;
+                background: #ffffff;
+            }
+            QComboBox::drop-down { width: 0px; border: none; background: transparent; }
+            QComboBox QAbstractItemView {
+                background: #ffffff;
+                color: #111827;
+                border: 1px solid #b8c0ca;
+                selection-background-color: #eef2f7;
+                selection-color: #111827;
+                outline: none;
+            }
+            QComboBox QAbstractItemView::item {
+                background: #ffffff;
+                color: #111827;
+                padding: 9px 12px;
+                min-height: 28px;
+            }
+            QComboBox QAbstractItemView::item:hover {
+                background: #f3f4f6;
+                color: #111827;
+            }
+            QComboBox QAbstractItemView::item:selected {
+                background: #e5e7eb;
+                color: #111827;
+            }
+        """)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+
+        rect = self.rect()
+        painter.setPen(QColor("#b8c0ca"))
+        painter.setBrush(QColor("#ffffff"))
+        painter.drawRoundedRect(
+            rect.adjusted(0, 0, -1, -1),
+            8,
+            8,
+        )
+
+        # Current selected text.
+        text_rect = rect.adjusted(
+            12,
+            0,
+            -(self.BUTTON_WIDTH + 8),
+            0,
+        )
+        painter.setPen(QColor("#111827"))
+        font = painter.font()
+        font.setPointSize(10)
+        painter.setFont(font)
+
+        current = self.currentText().strip()
+        if not current:
+            current = "Pilih Jenis"
+
+        painter.drawText(
+            text_rect,
+            Qt.AlignVCenter | Qt.AlignLeft,
+            current,
+        )
+
+        # Button separator.
+        divider_x = rect.right() - self.BUTTON_WIDTH
+        painter.setPen(QColor("#b8c0ca"))
+        painter.drawLine(
+            divider_x,
+            rect.top() + 1,
+            divider_x,
+            rect.bottom() - 1,
+        )
+
+        # Button label.
+        button_rect = rect.adjusted(
+            divider_x - rect.left() + 1,
+            0,
+            0,
+            0,
+        )
+        painter.setPen(QColor("#b8c0ca"))
+        button_font = painter.font()
+        button_font.setBold(False)
+        painter.setFont(button_font)
+        painter.drawText(
+            button_rect,
+            Qt.AlignCenter,
+            "▼",
+        )
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.showPopup()
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
 # ============================================================
 # PATH
 # ============================================================
@@ -63,6 +503,7 @@ BASE_DIR = Path(__file__).resolve().parent
 
 ATTENDANCE_FILE = BASE_DIR / "attendance.csv"
 PEOPLE_FILE = BASE_DIR / "people.csv"
+HOLIDAYS_FILE = BASE_DIR / "holidays.csv"
 
 FACES_DIR = BASE_DIR / "faces"
 MODEL_DIR = BASE_DIR / "face_model"
@@ -79,6 +520,73 @@ MODEL_FILE = MODEL_DIR / "scanly_faces.yml"
 
 ADMIN_USERNAME = "admin"
 ADMIN_PASSWORD = "admin123"
+
+
+# ============================================================
+# UNIFIED FORM / FIELD STYLE
+# ============================================================
+
+FORM_FIELD_STYLE = """
+QLineEdit, QComboBox, QDateEdit, QSpinBox, QTimeEdit {
+    background: #ffffff;
+    color: #172033;
+    border: 1px solid #d9e0e7;
+    border-radius: 8px;
+    min-height: 40px;
+    padding: 0 12px;
+    font-size: 13px;
+}
+QLineEdit:hover, QComboBox:hover, QDateEdit:hover,
+QSpinBox:hover, QTimeEdit:hover { border-color: #aeb9c6; }
+QLineEdit:focus, QComboBox:focus, QDateEdit:focus,
+QSpinBox:focus, QTimeEdit:focus {
+    border: 1px solid #2563eb;
+    background: #ffffff;
+}
+QComboBox::drop-down, QDateEdit::drop-down {
+    width: 30px;
+    border: none;
+    background: transparent;
+}
+QComboBox QAbstractItemView {
+    background: #ffffff;
+    color: #172033;
+    border: 1px solid #d9e0e7;
+    selection-background-color: #eaf1ff;
+    selection-color: #1d4ed8;
+    outline: none;
+}
+QComboBox QAbstractItemView::item {
+    background: #ffffff;
+    color: #172033;
+    padding: 8px 10px;
+    min-height: 28px;
+}
+QComboBox QAbstractItemView::item:hover {
+    background: #f3f6fa;
+    color: #172033;
+}
+QComboBox QAbstractItemView::item:selected {
+    background: #eaf1ff;
+    color: #1d4ed8;
+}
+"""
+
+def normalize_form(form):
+    form.setHorizontalSpacing(14)
+    form.setVerticalSpacing(14)
+    form.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+    form.setFormAlignment(Qt.AlignTop)
+    form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+    return form
+
+def normalize_field(widget, minimum_width=220, height=40):
+    widget.setMinimumHeight(height)
+    widget.setMinimumWidth(minimum_width)
+    widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+    if not widget.styleSheet().strip():
+        widget.setStyleSheet(FORM_FIELD_STYLE)
+    return widget
 
 
 # ============================================================
@@ -166,6 +674,29 @@ QPushButton#NavButton[active="true"] {
     background: #f4f7fb;
     color: #0f1724;
     border-left: 4px solid transparent;
+}
+
+
+QPushButton#LogoutButton {
+    background: #f8fafc;
+    color: #374151;
+    border: 1px solid #e5e7eb;
+    border-radius: 9px;
+    padding: 8px 12px;
+    font-size: 13px;
+    font-weight: 700;
+    text-align: center;
+}
+
+QPushButton#LogoutButton:hover {
+    background: #fff1f2;
+    color: #b42318;
+    border-color: #fecdd3;
+}
+
+QPushButton#LogoutButton:pressed {
+    background: #ffe4e6;
+    color: #991b1b;
 }
 
 QPushButton#Primary {
@@ -642,8 +1173,9 @@ def load_attendance():
                     "Nama": row.get("Nama", "").strip(),
                     "Tanggal": row.get("Tanggal", "").strip(),
                     "Jam": row.get("Jam", "").strip(),
-                    "Score": row.get("Score", "").strip(),
+                    "Skor": row.get("Skor", "").strip(),
                     "Status": row.get("Status", "").strip(),
+                    "Keterangan": row.get("Keterangan", "").strip(),
                 })
 
     except Exception as error:
@@ -654,6 +1186,1084 @@ def load_attendance():
         )
 
     return rows
+
+
+
+# ============================================================
+# HOLIDAY + MONTHLY ATTENDANCE HELPERS
+# ============================================================
+
+def load_holidays():
+    holidays = {}
+    if not HOLIDAYS_FILE.exists():
+        return holidays
+
+    try:
+        with open(
+            HOLIDAYS_FILE,
+            "r",
+            encoding="utf-8-sig",
+            newline=""
+        ) as file:
+            reader = csv.DictReader(file)
+            for row in reader:
+                date_text = str(row.get("Tanggal", "")).strip()
+                note = str(row.get("Keterangan", "")).strip()
+                if date_text:
+                    holidays[date_text] = note
+    except Exception as error:
+        print("[ERROR] holidays.csv:", error)
+
+    return holidays
+
+
+def save_holidays(holidays):
+    HOLIDAYS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with open(
+        HOLIDAYS_FILE,
+        "w",
+        encoding="utf-8-sig",
+        newline=""
+    ) as file:
+        writer = csv.writer(file)
+        writer.writerow(["Tanggal", "Keterangan"])
+        for date_text in sorted(holidays):
+            writer.writerow([date_text, holidays[date_text]])
+
+
+def is_working_day(day, holidays=None):
+    holidays = holidays if holidays is not None else load_holidays()
+    return day.weekday() < 5 and day.strftime("%Y-%m-%d") not in holidays
+
+
+def working_days_in_month(year, month, holidays=None):
+    holidays = holidays if holidays is not None else load_holidays()
+    total = 0
+    last_day = calendar.monthrange(year, month)[1]
+    for day_number in range(1, last_day + 1):
+        day = datetime(year, month, day_number).date()
+        if is_working_day(day, holidays):
+            total += 1
+    return total
+
+
+def attendance_status_is_present(status):
+    value = str(status or "").strip().lower()
+    return value in {
+        "hadir",
+        "tepat waktu",
+        "terlambat",
+        "pulang",
+    }
+
+
+def monthly_person_summary(name, year, month, attendance, holidays=None):
+    holidays = holidays if holidays is not None else load_holidays()
+    working = working_days_in_month(year, month, holidays)
+
+    month_prefix = f"{year:04d}-{month:02d}-"
+    rows = [
+        row for row in attendance
+        if row.get("Nama", "").strip() == name
+        and row.get("Tanggal", "").startswith(month_prefix)
+    ]
+
+    # One calendar date counts at most once for each status bucket.
+    by_date = {}
+    for row in rows:
+        date_text = row.get("Tanggal", "").strip()
+        status = row.get("Status", "").strip()
+        if date_text:
+            by_date[date_text] = status
+
+    hadir = sum(
+        1 for status in by_date.values()
+        if attendance_status_is_present(status)
+    )
+    izin = sum(
+        1 for status in by_date.values()
+        if status.lower() == "izin"
+    )
+    sakit = sum(
+        1 for status in by_date.values()
+        if status.lower() == "sakit"
+    )
+    tanpa = sum(
+        1 for status in by_date.values()
+        if status.lower() in {
+            "tanpa keterangan",
+            "tanpa_keterangan",
+            "alpha",
+            "alpa",
+        }
+    )
+
+    percentage = (
+        (hadir / working) * 100.0
+        if working > 0
+        else 0.0
+    )
+
+    return {
+        "hadir": hadir,
+        "izin": izin,
+        "sakit": sakit,
+        "tanpa_keterangan": tanpa,
+        "hari_kerja": working,
+        "percentage": min(100.0, max(0.0, percentage)),
+    }
+
+
+
+# =========================================================
+# DATE PICKER STYLE
+# =========================================================
+DATE_PICKER_STYLE = """
+QDateEdit {
+    background: #ffffff;
+    color: #111827;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    padding: 6px 8px;
+}
+
+QDateEdit::drop-down {
+    background: #ffffff;
+    border-left: 1px solid #d1d5db;
+    width: 28px;
+}
+
+QDateEdit::down-arrow {
+    width: 10px;
+    height: 10px;
+}
+
+QCalendarWidget {
+    background: #ffffff;
+    color: #111827;
+}
+
+QCalendarWidget QWidget {
+    background: #ffffff;
+    color: #111827;
+}
+
+QCalendarWidget QToolButton {
+    background: #ffffff;
+    color: #111827;
+    border: none;
+    padding: 5px;
+}
+
+QCalendarWidget QToolButton:hover {
+    background: #f3f4f6;
+}
+
+QCalendarWidget QSpinBox {
+    background: #ffffff;
+    color: #111827;
+    border: 1px solid #d1d5db;
+}
+
+QCalendarWidget QAbstractItemView {
+    background: #ffffff;
+    color: #111827;
+    selection-background-color: #2563eb;
+    selection-color: #ffffff;
+    alternate-background-color: #f9fafb;
+}
+
+QCalendarWidget QAbstractItemView:disabled {
+    color: #9ca3af;
+}
+"""
+
+
+class HolidayDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Kelola Hari Libur")
+        self.resize(760, 620)
+        self.setModal(True)
+
+        # Force this dialog to stay light even when the application/system
+        # palette is dark.
+        self.setStyleSheet("""
+            QDialog {
+                background: #ffffff;
+                color: #172033;
+            }
+
+            QLabel {
+                background: transparent;
+                color: #172033;
+            }
+
+            QLineEdit {
+                background: #ffffff;
+                color: #172033;
+                border: 1px solid #d9e0e7;
+                border-radius: 8px;
+                padding: 0 12px;
+                min-height: 40px;
+            }
+
+            QLineEdit:focus {
+                border: 1px solid #2563eb;
+                background: #ffffff;
+                color: #172033;
+            }
+
+            QTableWidget {
+                background: #ffffff;
+                color: #172033;
+                border: 1px solid #e1e6ec;
+                border-radius: 8px;
+                gridline-color: #edf1f5;
+                selection-background-color: #eaf1ff;
+                selection-color: #172033;
+                alternate-background-color: #fbfcfe;
+            }
+
+            QTableWidget::item {
+                background: #ffffff;
+                color: #172033;
+                padding: 9px 12px;
+                border-bottom: 1px solid #edf1f5;
+            }
+
+            QTableWidget::item:selected {
+                background: #eaf1ff;
+                color: #172033;
+            }
+
+            QHeaderView::section {
+                background: #f8fafc;
+                color: #364152;
+                border: none;
+                border-bottom: 1px solid #e1e6ec;
+                padding: 11px 12px;
+                font-weight: 700;
+            }
+
+            QPushButton {
+                min-height: 40px;
+                border-radius: 8px;
+                padding: 0 16px;
+                font-weight: 700;
+            }
+
+            QPushButton#Primary {
+                background: #111827;
+                color: #ffffff;
+                border: none;
+            }
+
+            QPushButton#Primary:hover {
+                background: #1f2937;
+                color: #ffffff;
+            }
+
+            QPushButton#Danger {
+                background: #fff1f2;
+                color: #b42318;
+                border: 1px solid #fecdd3;
+            }
+
+            QPushButton#Danger:hover {
+                background: #ffe4e6;
+                color: #9f1239;
+            }
+
+            QPushButton#Secondary {
+                background: #f3f4f6;
+                color: #374151;
+                border: 1px solid #e5e7eb;
+            }
+
+            QPushButton#Secondary:hover {
+                background: #e5e7eb;
+                color: #111827;
+            }
+        """)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(28, 26, 28, 24)
+        layout.setSpacing(16)
+
+        title = QLabel("Hari Libur / Tanggal Merah")
+        title.setStyleSheet(
+            "font-size:21px; font-weight:700; color:#0f1724;"
+        )
+        layout.addWidget(title)
+
+        subtitle = QLabel(
+            "Sabtu dan Minggu otomatis bukan hari kerja. "
+            "Tambahkan tanggal merah/libur khusus di sini."
+        )
+        subtitle.setWordWrap(True)
+        subtitle.setStyleSheet("color:#687083; font-size:13px;")
+        layout.addWidget(subtitle)
+
+        # ------------------------------
+        # Input row
+        # ------------------------------
+        form_card = QFrame()
+        form_card.setStyleSheet("""
+            QFrame {
+                background: #f8fafc;
+                border: 1px solid #e8edf2;
+                border-radius: 10px;
+            }
+            QLabel {
+                color: #364152;
+                font-weight: 600;
+            }
+        """)
+
+        form = QGridLayout(form_card)
+        form.setContentsMargins(16, 16, 16, 16)
+        form.setHorizontalSpacing(12)
+        form.setVerticalSpacing(10)
+
+        date_label = QLabel("Tanggal")
+        date_label.setFixedWidth(75)
+
+        self.date_edit = ScanlyDateEdit(QDate.currentDate())
+        self.date_edit.setCalendarPopup(True)
+        self.date_edit.setDisplayFormat("dd/MM/yyyy")
+        setup_white_date_picker(self.date_edit)
+        normalize_field(self.date_edit, 180, 40)
+
+        note_label = QLabel("Keterangan")
+        note_label.setFixedWidth(85)
+
+        self.note_edit = QLineEdit()
+        self.note_edit.setPlaceholderText("Contoh: Idul Fitri")
+        normalize_field(self.note_edit, 280, 40)
+
+        add = QPushButton("TAMBAH")
+        add.setObjectName("Primary")
+        add.setFixedSize(105, 40)
+        add.clicked.connect(self.add_holiday)
+
+        form.addWidget(date_label, 0, 0)
+        form.addWidget(self.date_edit, 0, 1, 1, 2)
+        form.addWidget(note_label, 1, 0)
+        form.addWidget(self.note_edit, 1, 1)
+        form.addWidget(add, 1, 2)
+        form.setColumnStretch(1, 1)
+
+        layout.addWidget(form_card)
+
+        # ------------------------------
+        # Table
+        # ------------------------------
+        table_title = QLabel("Daftar Hari Libur")
+        table_title.setStyleSheet(
+            "font-size:14px; font-weight:700; color:#172033;"
+        )
+        layout.addWidget(table_title)
+
+        self.table = QTableWidget()
+        self.table.setColumnCount(2)
+        self.table.setHorizontalHeaderLabels(["Tanggal", "Keterangan"])
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table.setAlternatingRowColors(True)
+        self.table.verticalHeader().setVisible(False)
+        self.table.setShowGrid(False)
+        self.table.setMinimumHeight(280)
+
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.Stretch)
+
+        layout.addWidget(self.table, 1)
+
+        # ------------------------------
+        # Bottom actions
+        # ------------------------------
+        buttons = QHBoxLayout()
+        buttons.setSpacing(10)
+
+        remove = QPushButton("HAPUS TANGGAL TERPILIH")
+        remove.setObjectName("Danger")
+        remove.clicked.connect(self.remove_selected)
+
+        close = QPushButton("TUTUP")
+        close.setObjectName("Secondary")
+        close.setFixedWidth(100)
+        close.clicked.connect(self.accept)
+
+        buttons.addWidget(remove)
+        buttons.addStretch(1)
+        buttons.addWidget(close)
+        layout.addLayout(buttons)
+
+        self.refresh()
+
+    def refresh(self):
+        self.holidays = load_holidays()
+        self.table.setRowCount(0)
+
+        for date_text, note in sorted(self.holidays.items()):
+            row = self.table.rowCount()
+            self.table.insertRow(row)
+
+            date_item = QTableWidgetItem(date_text)
+            note_item = QTableWidgetItem(note)
+
+            date_item.setTextAlignment(Qt.AlignVCenter | Qt.AlignLeft)
+            note_item.setTextAlignment(Qt.AlignVCenter | Qt.AlignLeft)
+
+            self.table.setItem(row, 0, date_item)
+            self.table.setItem(row, 1, note_item)
+
+        self.table.resizeRowsToContents()
+
+    def add_holiday(self):
+        date_text = (
+            self.date_edit.date()
+            .toPython()
+            .strftime("%Y-%m-%d")
+        )
+        note = self.note_edit.text().strip()
+
+        holidays = load_holidays()
+        holidays[date_text] = note
+        save_holidays(holidays)
+
+        self.note_edit.clear()
+        self.refresh()
+
+    def remove_selected(self):
+        row = self.table.currentRow()
+        if row < 0:
+            QMessageBox.information(
+                self,
+                "Hari Libur",
+                "Pilih tanggal yang ingin dihapus terlebih dahulu."
+            )
+            return
+
+        date_item = self.table.item(row, 0)
+        if date_item is None:
+            return
+
+        date_text = date_item.text().strip()
+
+        holidays = load_holidays()
+        holidays.pop(date_text, None)
+        save_holidays(holidays)
+        self.refresh()
+
+class ManualStatusDialog(QDialog):
+    """
+    Presensi manual mengikuti jam kerja Scanly.
+
+    08:00-08:30  : Hadir
+    08:31-14:30  : Terlambat / Izin / Sakit
+    14:31-15:59  : ditutup
+    16:00-19:00  : hanya Pulang untuk pengguna yang sudah absen masuk
+    >19:00       : ditutup
+    """
+
+    def __init__(self, parent, people):
+        super().__init__(parent)
+
+        self.people = people
+        self.setWindowTitle("Presensi Manual")
+        self.resize(700, 600)
+        self.setMinimumSize(660, 560)
+        self.setModal(True)
+
+        self.setStyleSheet("""
+            QDialog {
+                background: #ffffff;
+                color: #172033;
+            }
+            QLabel {
+                background: transparent;
+                color: #172033;
+            }
+            QLabel#DialogTitle {
+                color: #0f1724;
+                font-size: 22px;
+                font-weight: 800;
+            }
+            QLabel#DialogSubtitle {
+                color: #6b7280;
+                font-size: 13px;
+            }
+            QLabel#AutoLabel {
+                color: #374151;
+                font-size: 12px;
+                font-weight: 700;
+            }
+            QLabel#AutoDateTime {
+                color: #111827;
+                font-size: 15px;
+                font-weight: 700;
+            }
+            QLabel#AutoBadge {
+                background: #e8f5ec;
+                color: #16703a;
+                border-radius: 8px;
+                padding: 5px 9px;
+                font-size: 11px;
+                font-weight: 700;
+            }
+            QLabel#ModeLabel {
+                color: #374151;
+                font-size: 12px;
+                font-weight: 700;
+            }
+            QLabel#ModePreview {
+                background: #f3f6f9;
+                color: #374151;
+                border: 1px solid #e5e7eb;
+                border-radius: 9px;
+                padding: 10px 12px;
+                font-size: 12px;
+                font-weight: 600;
+            }
+            QLabel#InfoBox {
+                background: #f3f6f9;
+                color: #4b5563;
+                border: 1px solid #e5e7eb;
+                border-radius: 9px;
+                padding: 11px 13px;
+            }
+            QLineEdit {
+                background: #ffffff;
+                color: #172033;
+                border: 1px solid #d9e0e7;
+                border-radius: 8px;
+                padding: 0 12px;
+                min-height: 40px;
+            }
+            QLineEdit:focus {
+                border: 1px solid #2563eb;
+            }
+            QPushButton#Primary {
+                background: #111827;
+                color: #ffffff;
+                border: none;
+                border-radius: 8px;
+                min-height: 42px;
+                padding: 0 20px;
+                font-weight: 700;
+            }
+            QPushButton#Primary:hover {
+                background: #1f2937;
+            }
+            QPushButton#Secondary {
+                background: #f3f4f6;
+                color: #374151;
+                border: 1px solid #e5e7eb;
+                border-radius: 8px;
+                min-height: 42px;
+                padding: 0 20px;
+                font-weight: 600;
+            }
+            QPushButton#Secondary:hover {
+                background: #e5e7eb;
+                color: #111827;
+            }
+        """)
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(28, 30, 28, 24)
+        outer.setSpacing(16)
+
+        title = QLabel("Tambah Presensi Manual")
+        title.setObjectName("DialogTitle")
+        outer.addWidget(title)
+
+        subtitle = QLabel(
+            "Pilih pengguna. Jenis presensi mengikuti jam kerja secara otomatis."
+        )
+        subtitle.setObjectName("DialogSubtitle")
+        subtitle.setWordWrap(True)
+        outer.addWidget(subtitle)
+
+        # ========================================================
+        # WAKTU OTOMATIS
+        # ========================================================
+        auto_card = QFrame()
+        auto_card.setObjectName("AutoTimeCard")
+
+        auto_layout = QHBoxLayout(auto_card)
+        auto_layout.setContentsMargins(14, 12, 14, 12)
+        auto_layout.setSpacing(12)
+
+        auto_left = QVBoxLayout()
+        auto_left.setSpacing(2)
+
+        auto_label = QLabel("Tanggal & Waktu Presensi")
+        auto_label.setObjectName("AutoLabel")
+        auto_left.addWidget(auto_label)
+
+        self.auto_datetime = QLabel()
+        self.auto_datetime.setObjectName("AutoDateTime")
+        auto_left.addWidget(self.auto_datetime)
+
+        auto_layout.addLayout(auto_left, 1)
+
+        auto_badge = QLabel("OTOMATIS")
+        auto_badge.setObjectName("AutoBadge")
+        auto_badge.setAlignment(Qt.AlignCenter)
+        auto_badge.setFixedWidth(92)
+        auto_layout.addWidget(auto_badge)
+
+        outer.addWidget(auto_card)
+
+        # ========================================================
+        # FORM
+        # ========================================================
+        form_card = QFrame()
+        form_card.setObjectName("AutoTimeCard")
+
+        form = QGridLayout(form_card)
+        form.setContentsMargins(16, 16, 16, 16)
+        form.setHorizontalSpacing(14)
+        form.setVerticalSpacing(12)
+
+        name_label = QLabel("Nama")
+        name_label.setFixedWidth(90)
+
+        self.person_combo = ScanlySelectBox()
+        self.person_combo.setStyleSheet(COMBO_LIGHT_STYLE)
+
+        for person in people:
+            name = str(person.get("Nama", "")).strip()
+            if name:
+                self.person_combo.addItem(
+                    f"{name} ({person.get('ID', '')})",
+                    person,
+                )
+
+        self.person_combo.currentIndexChanged.connect(
+            self.update_time_rules
+        )
+
+        status_label = QLabel("Jenis")
+        status_label.setFixedWidth(90)
+
+        self.status_combo = ScanlySelectBox()
+        self.status_combo.setStyleSheet(COMBO_LIGHT_STYLE)
+
+        note_label = QLabel("Keterangan")
+        note_label.setFixedWidth(90)
+
+        self.note_edit = QLineEdit()
+        self.note_edit.setPlaceholderText(
+            "Isi keterangan untuk Izin/Sakit (wajib)"
+        )
+
+        normalize_field(self.person_combo, 360, 42)
+        normalize_field(self.status_combo, 230, 42)
+        normalize_field(self.note_edit, 360, 42)
+
+        form.addWidget(name_label, 0, 0)
+        form.addWidget(self.person_combo, 0, 1, 1, 2)
+
+        form.addWidget(status_label, 1, 0)
+        form.addWidget(self.status_combo, 1, 1, 1, 2)
+
+        form.addWidget(note_label, 2, 0)
+        form.addWidget(self.note_edit, 2, 1, 1, 2)
+
+        form.setColumnStretch(1, 1)
+        form.setColumnStretch(2, 1)
+
+        outer.addWidget(form_card)
+
+        # ========================================================
+        # MODE / INFORMASI WAKTU
+        # ========================================================
+        self.mode_preview = QLabel()
+        self.mode_preview.setObjectName("ModePreview")
+        self.mode_preview.setWordWrap(True)
+        outer.addWidget(self.mode_preview)
+
+        info = QLabel(
+            "Presensi manual tidak mengubah mesin pengenalan wajah dan liveness."
+        )
+        info.setObjectName("InfoBox")
+        info.setWordWrap(True)
+        outer.addWidget(info)
+
+        # ========================================================
+        # BUTTON
+        # ========================================================
+        buttons = QHBoxLayout()
+        buttons.setSpacing(10)
+        buttons.addStretch(1)
+
+        cancel = QPushButton("BATAL")
+        cancel.setObjectName("Secondary")
+        cancel.setFixedWidth(110)
+        cancel.clicked.connect(self.reject)
+
+        self.save_button = QPushButton("SIMPAN")
+        self.save_button.setObjectName("Primary")
+        self.save_button.setFixedWidth(120)
+        self.save_button.clicked.connect(self.save)
+
+        buttons.addWidget(cancel)
+        buttons.addWidget(self.save_button)
+        outer.addLayout(buttons)
+
+        # Jam harus dievaluasi terus-menerus selama dialog terbuka.
+        self._clock_timer = QTimer(self)
+        self._clock_timer.timeout.connect(self.update_clock_and_rules)
+        self._clock_timer.start(1000)
+
+        self.update_clock_and_rules()
+
+    def _today_rows_for_person(self, person):
+        name = str(person.get("Nama", "")).strip()
+        today = datetime.now().strftime("%Y-%m-%d")
+
+        try:
+            rows = load_attendance()
+        except Exception:
+            rows = []
+
+        return [
+            row for row in rows
+            if str(row.get("Nama", "")).strip() == name
+            and str(row.get("Tanggal", "")).strip() == today
+        ]
+
+    def _has_entry_today(self, person):
+        present_statuses = {
+            "tepat waktu",
+            "terlambat",
+            "hadir",
+        }
+        return any(
+            str(row.get("Status", "")).strip().lower() in present_statuses
+            for row in self._today_rows_for_person(person)
+        )
+
+    def _has_exit_today(self, person):
+        return any(
+            str(row.get("Status", "")).strip().lower() == "pulang"
+            for row in self._today_rows_for_person(person)
+        )
+
+    def update_clock_and_rules(self):
+        now = datetime.now()
+        self.auto_datetime.setText(
+            now.strftime("%d/%m/%Y  •  %H:%M:%S")
+        )
+        self.update_time_rules()
+
+    def update_time_rules(self):
+        selected = self.person_combo.currentData()
+
+        old_status = self.status_combo.currentText().strip()
+        self.status_combo.blockSignals(True)
+        self.status_combo.clear()
+
+        seconds = (
+            datetime.now().hour * 3600
+            + datetime.now().minute * 60
+            + datetime.now().second
+        )
+
+        start_in = 8 * 3600
+        on_time_end = 8 * 3600 + 30 * 60
+        late_end = 14 * 3600 + 30 * 60
+        return_start = 16 * 3600
+        return_end = 19 * 3600
+
+        enabled = True
+        mode_text = ""
+
+        if seconds < start_in:
+            enabled = False
+            mode_text = (
+                "Presensi masuk belum dibuka. "
+                "Waktu masuk dimulai pukul 08:00."
+            )
+
+        elif seconds <= on_time_end:
+            self.status_combo.addItem("Hadir")
+            self.status_combo.addItem("Izin")
+            self.status_combo.addItem("Sakit")
+            mode_text = (
+                "Mode masuk: 08:00–08:30 = Tepat Waktu."
+            )
+
+        elif seconds <= late_end:
+            self.status_combo.addItem("Terlambat")
+            self.status_combo.addItem("Izin")
+            self.status_combo.addItem("Sakit")
+            mode_text = (
+                "Mode masuk: 08:31–14:30 = Terlambat "
+                "(tetap dihitung sebagai hadir)."
+            )
+
+        elif seconds < return_start:
+            enabled = False
+            mode_text = (
+                "Presensi masuk sudah ditutup. "
+                "Absen pulang baru dibuka pukul 16:00."
+            )
+
+        elif seconds <= return_end:
+            if selected and self._has_entry_today(selected):
+                if not self._has_exit_today(selected):
+                    self.status_combo.addItem("Pulang")
+                    mode_text = (
+                        "Mode pulang: 16:00–19:00. "
+                        "Hanya pengguna yang sudah absen masuk yang dapat absen pulang."
+                    )
+                else:
+                    enabled = False
+                    mode_text = (
+                        "Pengguna ini sudah memiliki absen pulang hari ini."
+                    )
+            else:
+                enabled = False
+                mode_text = (
+                    "Mode pulang aktif, tetapi pengguna yang dipilih "
+                    "belum memiliki absen masuk hari ini."
+                )
+
+        else:
+            enabled = False
+            mode_text = (
+                "Semua presensi sudah ditutup. "
+                "Absen masuk berakhir 14:30 dan absen pulang berakhir 19:00."
+            )
+
+        # Pertahankan pilihan bila masih valid.
+        if old_status:
+            index = self.status_combo.findText(old_status)
+            if index >= 0:
+                self.status_combo.setCurrentIndex(index)
+        elif self.status_combo.count() > 0:
+            self.status_combo.setCurrentIndex(0)
+
+        self.status_combo.blockSignals(False)
+
+        self.status_combo.setEnabled(enabled and self.status_combo.count() > 0)
+        self.save_button.setEnabled(enabled and self.status_combo.count() > 0)
+        self.mode_preview.setText(mode_text)
+
+        if self.status_combo.currentText().strip() in {"Izin", "Sakit"}:
+            self.note_edit.setPlaceholderText(
+                "Isi keterangan untuk Izin/Sakit (wajib)"
+            )
+        else:
+            self.note_edit.setPlaceholderText(
+                "Keterangan (opsional)"
+            )
+
+    def save(self):
+        person = self.person_combo.currentData()
+
+        if not person:
+            QMessageBox.warning(
+                self,
+                "Presensi",
+                "Pilih nama terlebih dahulu.",
+            )
+            return
+
+        # Wajib memakai waktu terbaru, bukan waktu saat dialog pertama dibuka.
+        now = datetime.now()
+        seconds = now.hour * 3600 + now.minute * 60 + now.second
+
+        start_in = 8 * 3600
+        on_time_end = 8 * 3600 + 30 * 60
+        late_end = 14 * 3600 + 30 * 60
+        return_start = 16 * 3600
+        return_end = 19 * 3600
+
+        existing_rows = self._today_rows_for_person(person)
+        has_entry = any(
+            str(row.get("Status", "")).strip().lower()
+            in {"tepat waktu", "terlambat", "hadir"}
+            for row in existing_rows
+        )
+        has_exit = any(
+            str(row.get("Status", "")).strip().lower() == "pulang"
+            for row in existing_rows
+        )
+
+        requested = self.status_combo.currentText().strip()
+
+        if seconds < start_in:
+            QMessageBox.warning(
+                self,
+                "Belum Waktunya",
+                "Presensi masuk baru dibuka pukul 08:00.",
+            )
+            return
+
+        if seconds <= on_time_end:
+            allowed = {"Hadir", "Izin", "Sakit"}
+            expected_status = requested
+
+        elif seconds <= late_end:
+            allowed = {"Terlambat", "Izin", "Sakit"}
+            expected_status = requested
+
+        elif seconds < return_start:
+            QMessageBox.warning(
+                self,
+                "Absen Masuk Ditutup",
+                (
+                    "Presensi masuk sudah ditutup.\n\n"
+                    "Batas absen masuk adalah pukul 14:30.\n"
+                    "Absen pulang mulai pukul 16:00."
+                ),
+            )
+            return
+
+        elif seconds <= return_end:
+            if not has_entry:
+                QMessageBox.warning(
+                    self,
+                    "Belum Absen Masuk",
+                    (
+                        f"{person.get('Nama', '')} belum memiliki "
+                        "absen masuk hari ini.\n\n"
+                        "Absen pulang hanya dapat dilakukan untuk "
+                        "pengguna yang sudah absen masuk."
+                    ),
+                )
+                return
+
+            if has_exit:
+                QMessageBox.warning(
+                    self,
+                    "Sudah Absen Pulang",
+                    "Pengguna tersebut sudah memiliki absen pulang hari ini.",
+                )
+                return
+
+            allowed = {"Pulang"}
+            expected_status = requested
+
+        else:
+            QMessageBox.warning(
+                self,
+                "Presensi Ditutup",
+                (
+                    "Semua presensi sudah ditutup.\n\n"
+                    "Absen masuk: 08:00–14:30\n"
+                    "Absen pulang: 16:00–19:00"
+                ),
+            )
+            return
+
+        if expected_status not in allowed:
+            QMessageBox.warning(
+                self,
+                "Jenis Presensi Tidak Valid",
+                "Jenis presensi yang dipilih tidak sesuai dengan jam saat ini.",
+            )
+            self.update_time_rules()
+            return
+
+        if expected_status in {"Hadir", "Terlambat", "Izin", "Sakit"} and has_entry:
+            QMessageBox.warning(
+                self,
+                "Sudah Absen Masuk",
+                (
+                    f"{person.get('Nama', '')} sudah memiliki "
+                    "absen masuk hari ini."
+                ),
+            )
+            return
+
+        note = self.note_edit.text().strip()
+
+        if expected_status in {"Izin", "Sakit"} and not note:
+            QMessageBox.warning(
+                self,
+                "Keterangan wajib",
+                "Keterangan wajib diisi untuk Izin/Sakit.",
+            )
+            self.note_edit.setFocus()
+            return
+
+        self.result = {
+            "person": person,
+            "status": expected_status,
+            "note": note,
+        }
+
+        self.accept()
+
+
+
+def ensure_attendance_schema():
+    """Ensure attendance.csv has the optional Keterangan column.
+
+    Existing 5-column files are migrated in-place without changing
+    the existing attendance records.
+    """
+    if not ATTENDANCE_FILE.exists():
+        return
+
+    try:
+        with open(
+            ATTENDANCE_FILE,
+            "r",
+            encoding="utf-8-sig",
+            newline=""
+        ) as file:
+            reader = csv.DictReader(file)
+            fieldnames = reader.fieldnames or []
+            rows = list(reader)
+
+        if "Keterangan" in fieldnames:
+            return
+
+        target = [
+            "Nama",
+            "Tanggal",
+            "Jam",
+            "Skor",
+            "Status",
+            "Keterangan",
+        ]
+
+        with open(
+            ATTENDANCE_FILE,
+            "w",
+            encoding="utf-8-sig",
+            newline=""
+        ) as file:
+            writer = csv.DictWriter(
+                file,
+                fieldnames=target,
+            )
+            writer.writeheader()
+
+            for row in rows:
+                writer.writerow({
+                    "Nama": row.get("Nama", ""),
+                    "Tanggal": row.get("Tanggal", ""),
+                    "Jam": row.get("Jam", ""),
+                    "Skor": row.get("Skor", ""),
+                    "Status": row.get("Status", ""),
+                    "Keterangan": row.get("Keterangan", ""),
+                })
+
+        print("[DB] attendance.csv schema diperbarui: Keterangan")
+    except Exception as error:
+        print("[WARNING] Gagal memperbarui schema attendance.csv:", error)
+
 
 
 # ============================================================
@@ -671,7 +2281,7 @@ class LoginDialog(QDialog):
         super().__init__()
 
         self.setWindowTitle(
-            "Scanly - Admin Login"
+            "Scanly - Masuk Admin"
         )
 
         self.setFixedSize(
@@ -1084,7 +2694,7 @@ class LoginDialog(QDialog):
         )
 
         login_button = QPushButton(
-            "LOGIN   →"
+            "MASUK   →"
         )
 
         login_button.setObjectName(
@@ -1167,7 +2777,7 @@ class LoginDialog(QDialog):
 
             QMessageBox.warning(
                 self,
-                "Login Failed",
+                "Gagal Masuk",
                 "Username atau password salah."
             )
 
@@ -1183,7 +2793,7 @@ class AddPersonDialog(QDialog):
         super().__init__(parent)
 
         self.setWindowTitle(
-            "Scanly - Add Person"
+            "Scanly - Tambah Pengguna"
         )
 
         self.setFixedSize(
@@ -1205,7 +2815,7 @@ class AddPersonDialog(QDialog):
         panel_layout.setContentsMargins(22, 22, 22, 22)
         panel_layout.setSpacing(10)
 
-        title = QLabel("Add Person")
+        title = QLabel("Tambah Pengguna")
         title.setStyleSheet("""
             font-size:20px;
             font-weight:800;
@@ -1924,8 +3534,9 @@ class ManualAttendanceDialog(QDialog):
         # PENGGUNA
         # ============================================================
 
-        self.person_combo = QComboBox()
+        self.person_combo = ScanlySelectBox()
 
+        self.person_combo.setStyleSheet(COMBO_LIGHT_STYLE)
         self.person_combo.setMinimumHeight(
             44
         )
@@ -1961,11 +3572,7 @@ class ManualAttendanceDialog(QDialog):
                 background-color: #ffffff;
             }
 
-            QComboBox::drop-down {
-                width: 40px;
-                border: none;
-                background-color: transparent;
-            }
+            QComboBox::drop-down { width: 0px; border: none; background: transparent; }
 
             QComboBox QAbstractItemView {
                 background-color: #ffffff;
@@ -2089,8 +3696,9 @@ class ManualAttendanceDialog(QDialog):
         # JENIS ABSENSI
         # ============================================================
 
-        self.type_combo = QComboBox()
+        self.type_combo = ScanlySelectBox()
 
+        self.type_combo.setStyleSheet(COMBO_LIGHT_STYLE)
         self.type_combo.setMinimumHeight(
             44
         )
@@ -2126,11 +3734,7 @@ class ManualAttendanceDialog(QDialog):
                 background-color: #ffffff;
             }
 
-            QComboBox::drop-down {
-                width: 40px;
-                border: none;
-                background-color: transparent;
-            }
+            QComboBox::drop-down { width: 0px; border: none; background: transparent; }
 
             QComboBox QAbstractItemView {
                 background-color: #ffffff;
@@ -2316,33 +3920,18 @@ class ManualAttendanceDialog(QDialog):
     def update_status_preview(self):
 
         now = self.attendance_datetime
-
-        attendance_type = (
-            self.type_combo.currentText()
-        )
+        attendance_type = self.type_combo.currentText()
+        current_time = now.time()
 
         if attendance_type == "Masuk":
 
-            current_time = now.time()
-
-            start_time = datetime.strptime(
-                "08:00",
-                "%H:%M"
-            ).time()
-
-            late_time = datetime.strptime(
-                "08:30",
-                "%H:%M"
-            ).time()
+            start_time = datetime.strptime("08:00", "%H:%M").time()
+            on_time_end = datetime.strptime("08:30", "%H:%M").time()
+            late_end = datetime.strptime("14:30", "%H:%M").time()
 
             if current_time < start_time:
-
-                status = (
-                    "⚠  Belum masuk waktu absensi"
-                )
-
-                self.status_preview.setStyleSheet(
-                    """
+                status = "⚠  Belum masuk waktu absensi"
+                self.status_preview.setStyleSheet("""
                     background-color: #fff7ed;
                     color: #c2410c;
                     border: 1px solid #fed7aa;
@@ -2350,17 +3939,11 @@ class ManualAttendanceDialog(QDialog):
                     padding: 14px;
                     font-size: 14px;
                     font-weight: 600;
-                    """
-                )
+                """)
 
-            elif current_time <= late_time:
-
-                status = (
-                    "✓  Tepat Waktu"
-                )
-
-                self.status_preview.setStyleSheet(
-                    """
+            elif current_time <= on_time_end:
+                status = "✓  Tepat Waktu"
+                self.status_preview.setStyleSheet("""
                     background-color: #ecfdf5;
                     color: #047857;
                     border: 1px solid #a7f3d0;
@@ -2368,17 +3951,11 @@ class ManualAttendanceDialog(QDialog):
                     padding: 14px;
                     font-size: 14px;
                     font-weight: 600;
-                    """
-                )
+                """)
 
-            else:
-
-                status = (
-                    "⚠  Terlambat"
-                )
-
-                self.status_preview.setStyleSheet(
-                    """
+            elif current_time <= late_end:
+                status = "⚠  Terlambat"
+                self.status_preview.setStyleSheet("""
                     background-color: #fffbeb;
                     color: #b45309;
                     border: 1px solid #fde68a;
@@ -2386,67 +3963,11 @@ class ManualAttendanceDialog(QDialog):
                     padding: 14px;
                     font-size: 14px;
                     font-weight: 600;
-                    """
-                )
-
-        else:
-
-            start_time = datetime.strptime(
-                "16:00",
-                "%H:%M"
-            ).time()
-
-            end_time = datetime.strptime(
-                "18:00",
-                "%H:%M"
-            ).time()
-
-            current_time = now.time()
-
-            if current_time < start_time:
-
-                status = (
-                    "⚠  Belum waktunya absen pulang"
-                )
-
-                self.status_preview.setStyleSheet(
-                    """
-                    background-color: #fff7ed;
-                    color: #c2410c;
-                    border: 1px solid #fed7aa;
-                    border-radius: 10px;
-                    padding: 14px;
-                    font-size: 14px;
-                    font-weight: 600;
-                    """
-                )
-
-            elif current_time <= end_time:
-
-                status = (
-                    "✓  Absen Pulang"
-                )
-
-                self.status_preview.setStyleSheet(
-                    """
-                    background-color: #ecfdf5;
-                    color: #047857;
-                    border: 1px solid #a7f3d0;
-                    border-radius: 10px;
-                    padding: 14px;
-                    font-size: 14px;
-                    font-weight: 600;
-                    """
-                )
+                """)
 
             else:
-
-                status = (
-                    "⚠  Waktu absen pulang telah berakhir"
-                )
-
-                self.status_preview.setStyleSheet(
-                    """
+                status = "⛔  Absen Masuk Ditutup"
+                self.status_preview.setStyleSheet("""
                     background-color: #fef2f2;
                     color: #b91c1c;
                     border: 1px solid #fecaca;
@@ -2454,15 +3975,50 @@ class ManualAttendanceDialog(QDialog):
                     padding: 14px;
                     font-size: 14px;
                     font-weight: 600;
-                    """
-                )
+                """)
 
-        self.status_preview.setText(
-            status
-        )
-    # ========================================================
-    # SIMPAN ABSENSI
-    # ========================================================
+        else:
+
+            start_time = datetime.strptime("16:00", "%H:%M").time()
+            end_time = datetime.strptime("19:00", "%H:%M").time()
+
+            if current_time < start_time:
+                status = "⚠  Belum waktunya absen pulang"
+                self.status_preview.setStyleSheet("""
+                    background-color: #fff7ed;
+                    color: #c2410c;
+                    border: 1px solid #fed7aa;
+                    border-radius: 10px;
+                    padding: 14px;
+                    font-size: 14px;
+                    font-weight: 600;
+                """)
+
+            elif current_time <= end_time:
+                status = "✓  Absen Pulang"
+                self.status_preview.setStyleSheet("""
+                    background-color: #ecfdf5;
+                    color: #047857;
+                    border: 1px solid #a7f3d0;
+                    border-radius: 10px;
+                    padding: 14px;
+                    font-size: 14px;
+                    font-weight: 600;
+                """)
+
+            else:
+                status = "⛔  Waktu absen pulang telah berakhir"
+                self.status_preview.setStyleSheet("""
+                    background-color: #fef2f2;
+                    color: #b91c1c;
+                    border: 1px solid #fecaca;
+                    border-radius: 10px;
+                    padding: 14px;
+                    font-size: 14px;
+                    font-weight: 600;
+                """)
+
+        self.status_preview.setText(status)
 
     def save_manual(self):
 
@@ -2573,12 +4129,17 @@ class ManualAttendanceDialog(QDialog):
             + 30 * 60
         )
 
+        late_end = (
+            14 * 3600
+            + 30 * 60
+        )
+
         return_start = (
             16 * 3600
         )
 
         return_end = (
-            18 * 3600
+            19 * 3600
         )
 
         # ====================================================
@@ -2616,9 +4177,26 @@ class ManualAttendanceDialog(QDialog):
             # 08:31 - 15:59
             # -----------------------------------------------
 
-            elif current_seconds < return_start:
+            elif current_seconds <= late_end:
 
                 status = "Terlambat"
+
+            # -----------------------------------------------
+            # 14:31 - 15:59
+            # -----------------------------------------------
+
+            elif current_seconds < return_start:
+
+                QMessageBox.warning(
+                    self,
+                    "Absen Masuk Ditutup",
+                    (
+                        "Waktu absen masuk sudah ditutup.\n\n"
+                        "Batas absen masuk adalah pukul 14:30."
+                    )
+                )
+
+                return
 
             # -----------------------------------------------
             # 16:00+
@@ -2630,7 +4208,8 @@ class ManualAttendanceDialog(QDialog):
                     self,
                     "Absen Masuk Ditutup",
                     (
-                        "Waktu absen masuk sudah ditutup."
+                        "Absen masuk sudah ditutup.\n\n"
+                        "Mulai pukul 16:00 hanya tersedia absen pulang."
                     )
                 )
 
@@ -2674,7 +4253,7 @@ class ManualAttendanceDialog(QDialog):
                     "Absen Pulang Ditutup",
                     (
                         "Waktu absen pulang sudah ditutup.\n\n"
-                        "Batas absen pulang adalah pukul 18:00."
+                        "Batas absen pulang adalah pukul 19:00."
                     )
                 )
 
@@ -2875,7 +4454,7 @@ class ManualAttendanceDialog(QDialog):
                         "Nama",
                         "Tanggal",
                         "Jam",
-                        "Score",
+                        "Skor",
                         "Status"
                     ])
 
@@ -2928,51 +4507,194 @@ class AdminWindow(QMainWindow):
     # ========================================================
 
     def add_manual_attendance(self):
-
         self.people = load_people()
 
         if not self.people:
-
             QMessageBox.warning(
                 self,
                 "Tidak Ada Pengguna",
-                (
-                    "Belum ada pengguna terdaftar.\n\n"
-                    "Tambahkan pengguna terlebih dahulu "
-                    "di halaman People."
-                )
+                "Belum ada pengguna terdaftar.",
             )
-
             return
 
-        dialog = ManualAttendanceDialog(
+        dialog = ManualStatusDialog(self, self.people)
+
+        if dialog.exec() != QDialog.Accepted:
+            return
+
+        data = dialog.result
+        person = data["person"]
+        status = data["status"]
+        note = data["note"]
+
+        # Waktu final selalu diambil dari komputer saat tombol SIMPAN
+        # benar-benar ditekan. Admin tidak dapat mengubah tanggal/jam.
+        saved_at = datetime.now()
+
+        # Guard kedua: aturan jam wajib dipatuhi saat data benar-benar disimpan.
+        now_seconds = saved_at.hour * 3600 + saved_at.minute * 60 + saved_at.second
+        entry_late_end = 14 * 3600 + 30 * 60
+        return_start = 16 * 3600
+        return_end = 19 * 3600
+
+        if status == "Pulang":
+            if not (return_start <= now_seconds <= return_end):
+                QMessageBox.warning(
+                    self,
+                    "Absen Pulang Ditutup",
+                    "Absen pulang hanya dapat dilakukan pukul 16:00–19:00.",
+                )
+                return
+        else:
+            if now_seconds > entry_late_end:
+                QMessageBox.warning(
+                    self,
+                    "Absen Masuk Ditutup",
+                    "Absen masuk sudah ditutup setelah pukul 14:30.",
+                )
+                return
+
+        name = str(person.get("Nama", "")).strip()
+        person_id = str(person.get("ID", "")).strip()
+        date_text = saved_at.strftime("%Y-%m-%d")
+        time_text = saved_at.strftime("%H:%M:%S")
+
+        # Jangan membuat dua status pada tanggal yang sama untuk orang yang sama.
+        existing = [
+            row for row in self.attendance
+            if row.get("Nama", "").strip() == name
+            and row.get("Tanggal", "").strip() == date_text
+        ]
+
+        if existing:
+            # Status otomatis Tanpa Keterangan boleh dikoreksi admin
+            # menjadi Hadir/Izin/Sakit.
+            auto_rows = [
+                row for row in existing
+                if str(row.get("Status", "")).strip().lower()
+                in {"tanpa keterangan", "tanpa_keterangan", "alpha", "alpa"}
+            ]
+
+            if not auto_rows:
+                QMessageBox.warning(
+                    self,
+                    "Tanggal Sudah Memiliki Data",
+                    (
+                        f"{name} sudah memiliki data presensi pada "
+                        f"{date_text}.\n\n"
+                        "Gunakan Riwayat Presensi untuk memeriksanya."
+                    ),
+                )
+                return
+
+            try:
+                # Hapus baris otomatis pada tanggal tersebut, kemudian
+                # simpan status manual penggantinya.
+                rows = load_attendance()
+                kept = [
+                    row for row in rows
+                    if not (
+                        row.get("Nama", "").strip() == name
+                        and row.get("Tanggal", "").strip() == date_text
+                        and row.get("Status", "").strip().lower()
+                        in {
+                            "tanpa keterangan",
+                            "tanpa_keterangan",
+                            "alpha",
+                            "alpa",
+                        }
+                    )
+                ]
+
+                with open(
+                    ATTENDANCE_FILE,
+                    "w",
+                    newline="",
+                    encoding="utf-8-sig",
+                ) as file:
+                    writer = csv.DictWriter(
+                        file,
+                        fieldnames=[
+                            "Nama",
+                            "Tanggal",
+                            "Jam",
+                            "Skor",
+                            "Status",
+                            "Keterangan",
+                        ],
+                    )
+                    writer.writeheader()
+                    writer.writerows(kept)
+
+            except Exception as error:
+                QMessageBox.critical(
+                    self,
+                    "Gagal Memperbarui",
+                    f"Data Tanpa Keterangan tidak dapat dikoreksi.\n\n{error}",
+                )
+                return
+
+        try:
+            ensure_attendance_schema()
+            file_exists = ATTENDANCE_FILE.exists()
+
+            with open(
+                ATTENDANCE_FILE,
+                "a",
+                newline="",
+                encoding="utf-8-sig",
+            ) as file:
+                writer = csv.writer(file)
+
+                if not file_exists:
+                    writer.writerow([
+                        "Nama",
+                        "Tanggal",
+                        "Jam",
+                        "Skor",
+                        "Status",
+                        "Keterangan",
+                    ])
+
+                writer.writerow([
+                    name,
+                    date_text,
+                    time_text,
+                    "Manual",
+                    status,
+                    note,
+                ])
+
+        except Exception as error:
+            QMessageBox.critical(
+                self,
+                "Gagal Menyimpan",
+                f"Presensi manual gagal disimpan.\n\n{error}",
+            )
+            return
+
+        self.refresh_all()
+        self.stack.setCurrentIndex(2)
+        self.fill_attendance_table(self.attendance)
+
+        QMessageBox.information(
             self,
-            self.people
+            "Berhasil",
+            (
+                f"Presensi manual tersimpan.\n\n"
+                f"Nama: {name}\n"
+                f"Tanggal: {date_text}\n"
+                f"Jam: {time_text}\n"
+                f"Status: {status}"
+            ),
         )
-
-        if (
-            dialog.exec()
-            == QDialog.Accepted
-        ):
-
-            self.refresh_all()
-
-            # Pastikan halaman Attendance menampilkan
-            # data terbaru.
-            self.stack.setCurrentIndex(
-                2
-            )
-
-            self.fill_attendance_table(
-                self.attendance
-            )
 
     def __init__(self):
 
         super().__init__()
 
         self.setWindowTitle(
-            "Scanly - Admin Dashboard"
+            "Scanly - Portal Admin"
         )
 
         self.resize(
@@ -2991,6 +4713,13 @@ class AdminWindow(QMainWindow):
         self.build_ui()
 
         self.refresh_all()
+
+        # Cek status tanpa keterangan secara berkala. Kalau dashboard
+        # tetap terbuka melewati jam 18:00, sistem akan menandai user
+        # yang belum memiliki presensi pada hari kerja tersebut.
+        self._absence_timer = QTimer(self)
+        self._absence_timer.timeout.connect(self.check_auto_absence)
+        self._absence_timer.start(60_000)
 
         # ========================================================
     # MULAI ABSENSI
@@ -3271,7 +5000,7 @@ class AdminWindow(QMainWindow):
         except Exception:
             pass
         # keep font weight strong but allow QSS to set color/size
-        subtitle_label = QLabel("Dashboard Admin")
+        subtitle_label = QLabel("Portal Admin")
         subtitle_label.setObjectName("SidebarSubtitle")
         subtitle_label.setStyleSheet("margin:0px; padding:0px;")
         title_col.addWidget(title_label)
@@ -3292,11 +5021,11 @@ class AdminWindow(QMainWindow):
         layout.addSpacing(28)
 
         navigation = [
-            ("▦", "Dashboard"),
-            ("●", "People"),
-            ("▤", "Attendance Records"),
-            ("▥", "Reports"),
-            ("⚙", "Settings"),
+            ("▦", "Halaman Utama"),
+            ("●", "Pengguna"),
+            ("▤", "Riwayat Presensi"),
+            ("▥", "Laporan"),
+            ("⚙", "Pengaturan"),
 
                 
         ]
@@ -3435,7 +5164,7 @@ class AdminWindow(QMainWindow):
         user_info = QVBoxLayout()
 
         name = QLabel(
-            "Admin User"
+            "Admin"
         )
 
         name.setStyleSheet(
@@ -3470,6 +5199,15 @@ class AdminWindow(QMainWindow):
         layout.addLayout(
             user_row
         )
+
+        layout.addSpacing(12)
+
+        logout_button = QPushButton("↪  KELUAR")
+        logout_button.setObjectName("LogoutButton")
+        logout_button.setCursor(Qt.PointingHandCursor)
+        logout_button.setFixedHeight(40)
+        logout_button.clicked.connect(self.logout)
+        layout.addWidget(logout_button)
 
         return sidebar
 
@@ -3515,12 +5253,11 @@ class AdminWindow(QMainWindow):
         self.global_search = QLineEdit()
 
         self.global_search.setPlaceholderText(
-            "Search records..."
+            "Cari data presensi..."
         )
 
-        self.global_search.setFixedWidth(
-            320
-        )
+        self.global_search.setFixedWidth(320)
+        self.global_search.setMinimumHeight(38)
 
         self.global_search.textChanged.connect(
             self.global_search_changed
@@ -3533,7 +5270,7 @@ class AdminWindow(QMainWindow):
         layout.addStretch()
 
         status = QLabel(
-            "●  SYSTEM ONLINE"
+            "●  SISTEM AKTIF"
         )
 
         status.setStyleSheet("""
@@ -3626,117 +5363,114 @@ class AdminWindow(QMainWindow):
     # ========================================================
 
     def create_dashboard(self):
-
         page = QWidget()
-
-        layout = QVBoxLayout(
-            page
-        )
-
-        layout.setContentsMargins(
-            30,
-            25,
-            30,
-            30
-        )
-
-        layout.setSpacing(
-            18
-        )
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(30, 25, 30, 30)
+        layout.setSpacing(16)
 
         header = self.page_header(
-            "Dashboard Overview",
-            "Real-time attendance monitoring and analytics."
+            "Halaman Utama",
+            "Ringkasan absensi dan persentase kehadiran bulanan."
         )
 
-        refresh = QPushButton(
-            "↻  Refresh"
-        )
+        refresh = QPushButton("↻  Muat Ulang")
+        refresh.setObjectName("Secondary")
+        refresh.clicked.connect(self.refresh_all)
 
-        refresh.setObjectName(
-            "Secondary"
-        )
+        holiday = QPushButton("▣  Kelola Hari Libur")
+        holiday.setObjectName("Secondary")
+        holiday.clicked.connect(self.open_holiday_manager)
 
-        refresh.clicked.connect(
-            self.refresh_all
-        )
+        scan = QPushButton("▶  MULAI ABSENSI")
+        scan.setObjectName("Primary")
+        scan.clicked.connect(self.open_attendance_scanner)
 
-        export = QPushButton(
-            "▣  Export PDF"
-        )
-
-        export.setObjectName(
-            "Primary"
-        )
-
-        export.clicked.connect(
-            self.export_pdf
-        )
-
-        header.addWidget(
-            refresh
-        )
-
-        header.addWidget(
-            export
-        )
-
-        layout.addLayout(
-            header
-        )
+        header.addWidget(refresh)
+        header.addWidget(holiday)
+        header.addWidget(scan)
+        layout.addLayout(header)
 
         self.cards_layout = QHBoxLayout()
+        self.cards_layout.setSpacing(15)
+        layout.addLayout(self.cards_layout)
 
-        self.cards_layout.setSpacing(
-            15
+        month_bar = QHBoxLayout()
+        month_bar.setContentsMargins(0, 0, 0, 0)
+        month_bar.setSpacing(10)
+
+        period_label = QLabel("Periode kehadiran")
+        period_label.setFixedWidth(140)
+        month_bar.addWidget(period_label)
+
+        self.dashboard_month = ScanlySelectBox()
+        normalize_field(self.dashboard_month, 220, 40)
+        self.dashboard_month.setStyleSheet(COMBO_LIGHT_STYLE)
+        self.populate_month_combo(self.dashboard_month)
+        self.dashboard_month.currentIndexChanged.connect(
+            self.update_monthly_dashboard
         )
+        month_bar.addWidget(self.dashboard_month, 0)
+        month_bar.addStretch()
 
-        layout.addLayout(
-            self.cards_layout
+        self.dashboard_month_info = QLabel("")
+        self.dashboard_month_info.setStyleSheet(
+            "color:#687083; font-size:12px;"
         )
+        month_bar.addWidget(self.dashboard_month_info)
 
-        recent = QLabel(
-            "Recent Scans"
+        layout.addLayout(month_bar)
+
+        monthly_panel = QFrame()
+        monthly_panel.setObjectName("Panel")
+        monthly_layout = QVBoxLayout(monthly_panel)
+        monthly_layout.setContentsMargins(0, 0, 0, 0)
+        monthly_layout.setSpacing(0)
+
+        monthly_title = QLabel("REKAP KEHADIRAN")
+        monthly_title.setAlignment(Qt.AlignCenter)
+        monthly_title.setStyleSheet(
+            "font-size:18px; font-weight:700; padding:14px 16px 8px;"
         )
+        monthly_layout.addWidget(monthly_title)
 
-        recent.setStyleSheet("""
-            font-size:18px;
-            font-weight:600;
-        """)
-
-        layout.addWidget(
-            recent
+        self.monthly_table = QTableWidget()
+        self.monthly_table.setColumnCount(8)
+        self.monthly_table.setHorizontalHeaderLabels([
+            "NAMA",
+            "HADIR",
+            "IZIN",
+            "SAKIT",
+            "TANPA KETERANGAN",
+            "HARI KERJA",
+            "KEHADIRAN",
+            "STATUS",
+        ])
+        self.monthly_table.horizontalHeader().setMinimumSectionSize(90)
+        self.monthly_table.setSelectionBehavior(
+            QAbstractItemView.SelectRows
         )
-
-        panel = QFrame()
-
-        panel.setObjectName(
-            "Panel"
+        self.monthly_table.setSelectionMode(
+            QAbstractItemView.SingleSelection
         )
-
-        panel_layout = QVBoxLayout(
-            panel
+        self.monthly_table.setEditTriggers(
+            QAbstractItemView.NoEditTriggers
         )
-
-        panel_layout.setContentsMargins(
-            0,
-            0,
-            0,
-            0
+        self.monthly_table.setAlternatingRowColors(True)
+        self.monthly_table.setShowGrid(False)
+        self.monthly_table.verticalHeader().setVisible(False)
+        self.monthly_table.verticalHeader().setDefaultSectionSize(42)
+        self.monthly_table.horizontalHeader().setHighlightSections(False)
+        self.monthly_table.horizontalHeader().setSectionResizeMode(
+            QHeaderView.Stretch
         )
-
-        self.dashboard_table = (
-            self.create_attendance_table()
+        self.monthly_table.setMinimumHeight(260)
+        self.monthly_table.setSizePolicy(
+            QSizePolicy.Expanding,
+            QSizePolicy.Expanding
         )
+        monthly_layout.addWidget(self.monthly_table, 1)
 
-        panel_layout.addWidget(
-            self.dashboard_table
-        )
-
-        layout.addWidget(
-            panel,
-            1
-        )
+        layout.addWidget(monthly_panel, 1)
 
         return page
 
@@ -3764,12 +5498,12 @@ class AdminWindow(QMainWindow):
         )
 
         header = self.page_header(
-            "People",
-            "Manage registered people and face datasets."
+            "Pengguna",
+            "Kelola pengguna terdaftar dan dataset wajah."
         )
 
         add_button = QPushButton(
-            "+  ADD PERSON"
+            "+  TAMBAH PENGGUNA"
         )
 
         add_button.setObjectName(
@@ -3820,7 +5554,7 @@ class AdminWindow(QMainWindow):
         info_layout.addStretch()
 
         self.people_count_label = QLabel(
-            "0 people"
+            "0 pengguna"
         )
 
         self.people_count_label.setStyleSheet(
@@ -3940,154 +5674,96 @@ class AdminWindow(QMainWindow):
     # ========================================================
 
     def create_attendance(self):
-
         page = QWidget()
-
-        layout = QVBoxLayout(
-            page
-        )
-
-        layout.setContentsMargins(
-            30,
-            25,
-            30,
-            30
-        )
-
-        layout.setSpacing(
-            18
-        )
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(30, 25, 30, 30)
+        layout.setSpacing(16)
 
         layout.addLayout(
             self.page_header(
-                "Attendance Records",
-                "Review, filter, and manage attendance records."
+                "Riwayat Presensi",
+                "Lihat dan filter seluruh riwayat presensi."
             )
         )
 
-        filters = QHBoxLayout()
+        filter_panel = QFrame()
+        filter_panel.setObjectName("Panel")
+        filter_layout = QGridLayout(filter_panel)
+        filter_layout.setContentsMargins(18, 16, 18, 16)
+        filter_layout.setHorizontalSpacing(10)
+        filter_layout.setVerticalSpacing(10)
 
-        self.attendance_date_filter = QLineEdit()
+        date_label = QLabel("Tanggal")
+        date_label.setFixedWidth(70)
 
-        self.attendance_date_filter.setPlaceholderText(
-            "YYYY-MM-DD"
-        )
+        self.attendance_date_filter = ScanlyDateEdit(QDate.currentDate())
+        self.attendance_date_filter.setCalendarPopup(True)
+        self.attendance_date_filter.setDisplayFormat("dd/MM/yyyy")
+        setup_white_date_picker(self.attendance_date_filter)
+        self.attendance_date_filter.setSpecialValueText("Semua tanggal")
+        normalize_field(self.attendance_date_filter, 180, 40)
 
-        self.attendance_name_filter = QLineEdit()
+        self.attendance_date_all = QCheckBox("Semua tanggal")
+        self.attendance_date_all.setMinimumWidth(115)
 
-        self.attendance_name_filter.setPlaceholderText(
-            "Search employee / name..."
-        )
+        name_label = QLabel("Nama")
+        name_label.setFixedWidth(50)
 
-        filter_button = QPushButton(
-            "FILTER"
-        )
+        self.attendance_name_filter = ScanlySelectBox()
+        self.attendance_name_filter.setStyleSheet(COMBO_LIGHT_STYLE)
+        self.attendance_name_filter.addItem("Semua orang", None)
+        normalize_field(self.attendance_name_filter, 240, 40)
 
-        filter_button.setObjectName(
-            "Primary"
-        )
+        filter_button = QPushButton("FILTER")
+        filter_button.setObjectName("Primary")
+        filter_button.setFixedSize(92, 40)
+        filter_button.clicked.connect(self.apply_attendance_filter)
 
-        filter_button.clicked.connect(
-            self.apply_attendance_filter
-        )
+        reset_button = QPushButton("RESET")
+        reset_button.setObjectName("Secondary")
+        reset_button.setFixedSize(92, 40)
+        reset_button.clicked.connect(self.reset_attendance_filter)
 
-        reset_button = QPushButton(
-            "RESET"
-        )
+        filter_layout.addWidget(date_label, 0, 0)
+        filter_layout.addWidget(self.attendance_date_filter, 0, 1)
+        filter_layout.addWidget(self.attendance_date_all, 0, 2)
+        filter_layout.addWidget(name_label, 0, 3)
+        filter_layout.addWidget(self.attendance_name_filter, 0, 4)
+        filter_layout.addWidget(filter_button, 0, 5)
+        filter_layout.addWidget(reset_button, 0, 6)
+        filter_layout.setColumnStretch(7, 1)
 
-        reset_button.setObjectName(
-            "Secondary"
-        )
-
-        reset_button.clicked.connect(
-            self.reset_attendance_filter
-        )
-
-        filters.addWidget(
-            QLabel("Date")
-        )
-
-        filters.addWidget(
-            self.attendance_date_filter
-        )
-
-        filters.addWidget(
-            QLabel("Employee")
-        )
-
-        filters.addWidget(
-            self.attendance_name_filter
-        )
-
-        filters.addWidget(
-            filter_button
-        )
-
-        filters.addWidget(
-            reset_button
-        )
-
-        layout.addLayout(
-            filters
-        )
-                # ====================================================
-        # MANUAL ATTENDANCE
-        # ====================================================
+        layout.addWidget(filter_panel)
 
         manual_row = QHBoxLayout()
+        manual_row.setSpacing(10)
 
-        manual_button = QPushButton(
-            "✎  TAMBAH ABSENSI MANUAL"
-        )
+        manual_button = QPushButton("✎  TAMBAH PRESENSI MANUAL")
+        manual_button.setObjectName("Primary")
+        manual_button.setFixedHeight(42)
+        manual_button.setMinimumWidth(245)
+        manual_button.clicked.connect(self.add_manual_attendance)
 
-        manual_button.setObjectName(
-            "Primary"
-        )
+        holiday_button = QPushButton("▣  HARI LIBUR")
+        holiday_button.setObjectName("Secondary")
+        holiday_button.setFixedHeight(42)
+        holiday_button.setMinimumWidth(135)
+        holiday_button.clicked.connect(self.open_holiday_manager)
 
-        manual_button.clicked.connect(
-            self.add_manual_attendance
-        )
-
-        manual_row.addWidget(
-            manual_button
-        )
-
-        manual_row.addStretch()
-
-        layout.addLayout(
-            manual_row
-        )
+        manual_row.addWidget(manual_button)
+        manual_row.addWidget(holiday_button)
+        manual_row.addStretch(1)
+        layout.addLayout(manual_row)
 
         panel = QFrame()
+        panel.setObjectName("Panel")
+        panel_layout = QVBoxLayout(panel)
+        panel_layout.setContentsMargins(0, 0, 0, 0)
 
-        panel.setObjectName(
-            "Panel"
-        )
+        self.attendance_table = self.create_attendance_table()
+        panel_layout.addWidget(self.attendance_table)
 
-        panel_layout = QVBoxLayout(
-            panel
-        )
-
-        panel_layout.setContentsMargins(
-            0,
-            0,
-            0,
-            0
-        )
-
-        self.attendance_table = (
-            self.create_attendance_table()
-        )
-
-        panel_layout.addWidget(
-            self.attendance_table
-        )
-
-        layout.addWidget(
-            panel,
-            1
-        )
-
+        layout.addWidget(panel, 1)
         return page
 
     # ========================================================
@@ -4095,143 +5771,133 @@ class AdminWindow(QMainWindow):
     # ========================================================
 
     def create_reports(self):
-
         page = QWidget()
-
-        layout = QVBoxLayout(
-            page
-        )
-
-        layout.setContentsMargins(
-            30,
-            25,
-            30,
-            30
-        )
-
-        layout.setSpacing(
-            18
-        )
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(30, 25, 30, 30)
+        layout.setSpacing(18)
 
         header = self.page_header(
-            "Reports",
-            "Generate and export attendance reports."
+            "Laporan",
+            "Ekspor laporan harian atau bulanan dengan filter."
         )
 
-        export = QPushButton(
-            "▣  EXPORT PDF"
-        )
-
-        export.setObjectName(
-            "Primary"
-        )
-
-        export.clicked.connect(
-            self.export_pdf
-        )
-
-        header.addWidget(
-            export
-        )
-
-        layout.addLayout(
-            header
-        )
+        export_top = QPushButton("▣  EXPORT PDF")
+        export_top.setObjectName("Primary")
+        export_top.clicked.connect(self.export_pdf)
+        header.addWidget(export_top)
+        layout.addLayout(header)
 
         panel = QFrame()
+        panel.setObjectName("Panel")
+        panel_layout = QVBoxLayout(panel)
+        panel_layout.setContentsMargins(25, 25, 25, 25)
+        panel_layout.setSpacing(14)
 
-        panel.setObjectName(
-            "Panel"
+        title = QLabel("Laporan PDF Presensi")
+        title.setStyleSheet(
+            "font-size:19px; font-weight:700;"
+        )
+        panel_layout.addWidget(title)
+
+        info = QLabel(
+            "Tanggal menggunakan kalender (tidak perlu mengetik). "
+            "Nama menggunakan pilihan user yang terdaftar."
+        )
+        info.setStyleSheet("color:#687083;")
+        info.setWordWrap(True)
+        panel_layout.addWidget(info)
+
+        form_panel = QFrame()
+        form_layout = QGridLayout(form_panel)
+        form_layout.setContentsMargins(0, 4, 0, 4)
+        form_layout.setHorizontalSpacing(14)
+        form_layout.setVerticalSpacing(12)
+
+        self.report_date = ScanlyDateEdit(QDate.currentDate())
+        self.report_date.setCalendarPopup(True)
+        self.report_date.setDisplayFormat("dd/MM/yyyy")
+        setup_white_date_picker(self.report_date)
+        normalize_field(self.report_date, 220, 40)
+
+        self.report_all_dates = QCheckBox("Semua tanggal")
+        self.report_all_dates.setMinimumWidth(120)
+
+        date_row = QHBoxLayout()
+        date_row.setContentsMargins(0, 0, 0, 0)
+        date_row.setSpacing(10)
+        date_row.addWidget(self.report_date)
+        date_row.addWidget(self.report_all_dates)
+        date_row.addStretch(1)
+        date_widget = QWidget()
+        date_widget.setLayout(date_row)
+
+        self.report_person = ScanlySelectBox()
+        self.report_person.setStyleSheet(COMBO_LIGHT_STYLE)
+        self.report_person.addItem("Semua orang", None)
+        normalize_field(self.report_person, 300, 40)
+
+        self.report_month = ScanlySelectBox()
+        self.report_month.setStyleSheet(COMBO_LIGHT_STYLE)
+        self.populate_month_combo(self.report_month)
+        self.report_month.currentIndexChanged.connect(
+            self.update_report_month_hint
+        )
+        normalize_field(self.report_month, 300, 40)
+
+        for row, label_text, widget in (
+            (0, "Tanggal", date_widget),
+            (1, "Nama", self.report_person),
+            (2, "Bulan", self.report_month),
+        ):
+            label = QLabel(label_text)
+            label.setFixedWidth(80)
+            form_layout.addWidget(label, row, 0)
+            form_layout.addWidget(widget, row, 1)
+
+        form_layout.setColumnStretch(2, 1)
+        panel_layout.addWidget(form_panel)
+
+        self.report_hint = QLabel("")
+        self.report_hint.setWordWrap(True)
+        self.report_hint.setStyleSheet(
+            "background:#f3f6f9; padding:12px; border-radius:8px;"
+            "color:#4b5563;"
+        )
+        panel_layout.addWidget(self.report_hint)
+
+        buttons = QHBoxLayout()
+        buttons.setSpacing(10)
+
+        monthly_pdf = QPushButton("EKSPOR PDF BULANAN")
+        monthly_pdf.setObjectName("Primary")
+        monthly_pdf.clicked.connect(
+            lambda: self.export_pdf(monthly=True)
         )
 
-        panel_layout = QVBoxLayout(
-            panel
+        daily_pdf = QPushButton("EKSPOR PDF BERDASARKAN FILTER")
+        daily_pdf.setObjectName("Secondary")
+        daily_pdf.clicked.connect(
+            lambda: self.export_pdf(monthly=False)
         )
 
-        panel_layout.setContentsMargins(
-            25,
-            25,
-            25,
-            25
-        )
+        holiday_button = QPushButton("KELOLA HARI LIBUR")
+        holiday_button.setObjectName("Secondary")
+        holiday_button.clicked.connect(self.open_holiday_manager)
 
-        title = QLabel(
-            "Attendance PDF Report"
-        )
+        monthly_pdf.setFixedHeight(42)
+        daily_pdf.setFixedHeight(42)
+        holiday_button.setFixedHeight(42)
+        monthly_pdf.setMinimumWidth(190)
+        daily_pdf.setMinimumWidth(180)
+        holiday_button.setMinimumWidth(170)
 
-        title.setStyleSheet("""
-            font-size:19px;
-            font-weight:700;
-        """)
+        buttons.addWidget(monthly_pdf)
+        buttons.addWidget(daily_pdf)
+        buttons.addWidget(holiday_button)
+        buttons.addStretch(1)
 
-        panel_layout.addWidget(
-            title
-        )
-
-        panel_layout.addSpacing(
-            10
-        )
-
-        form = QHBoxLayout()
-
-        self.report_date = QLineEdit()
-
-        self.report_date.setPlaceholderText(
-            "YYYY-MM-DD"
-        )
-
-        self.report_person = QLineEdit()
-
-        self.report_person.setPlaceholderText(
-            "All people"
-        )
-
-        form.addWidget(
-            QLabel("Date")
-        )
-
-        form.addWidget(
-            self.report_date
-        )
-
-        form.addWidget(
-            QLabel("Name")
-        )
-
-        form.addWidget(
-            self.report_person
-        )
-
-        panel_layout.addLayout(
-            form
-        )
-
-        panel_layout.addSpacing(
-            18
-        )
-
-        export2 = QPushButton(
-            "EXPORT PDF"
-        )
-
-        export2.setObjectName(
-            "Primary"
-        )
-
-        export2.clicked.connect(
-            self.export_pdf
-        )
-
-        panel_layout.addWidget(
-            export2,
-            0,
-            Qt.AlignLeft
-        )
-
-        layout.addWidget(
-            panel
-        )
-
+        panel_layout.addLayout(buttons)
+        layout.addWidget(panel)
         layout.addStretch()
 
         return page
@@ -4261,8 +5927,8 @@ class AdminWindow(QMainWindow):
 
         layout.addLayout(
             self.page_header(
-                "Settings",
-                "Configure Scanly recognition preferences."
+                "Pengaturan",
+                "Atur preferensi pengenalan Scanly."
             )
         )
 
@@ -4283,15 +5949,12 @@ class AdminWindow(QMainWindow):
             25
         )
 
-        threshold_row = QHBoxLayout()
+        settings_grid = QGridLayout()
+        settings_grid.setHorizontalSpacing(16)
+        settings_grid.setVerticalSpacing(14)
 
-        threshold_row.addWidget(
-            QLabel(
-                "Recognition Threshold"
-            )
-        )
-
-        threshold_row.addStretch()
+        threshold_label = QLabel("Recognition Threshold")
+        threshold_label.setFixedWidth(200)
 
         self.threshold = QSpinBox()
 
@@ -4304,23 +5967,14 @@ class AdminWindow(QMainWindow):
             65
         )
 
-        threshold_row.addWidget(
-            self.threshold
-        )
+        normalize_field(self.threshold, 110, 40)
+        self.threshold.setFixedWidth(110)
 
-        panel_layout.addLayout(
-            threshold_row
-        )
+        settings_grid.addWidget(threshold_label, 0, 0)
+        settings_grid.addWidget(self.threshold, 0, 1)
 
-        voting_row = QHBoxLayout()
-
-        voting_row.addWidget(
-            QLabel(
-                "Multi-frame Voting"
-            )
-        )
-
-        voting_row.addStretch()
+        voting_label = QLabel("Multi-frame Voting")
+        voting_label.setFixedWidth(200)
 
         self.voting = QSpinBox()
 
@@ -4333,29 +5987,25 @@ class AdminWindow(QMainWindow):
             4
         )
 
-        voting_row.addWidget(
-            self.voting
-        )
+        normalize_field(self.voting, 110, 40)
+        self.voting.setFixedWidth(110)
 
-        voting_row.addWidget(
-            QLabel(
-                "dari 5 frame"
-            )
-        )
+        voting_hint = QLabel("dari 5 frame")
+        voting_hint.setStyleSheet("color:#687083;")
 
-        panel_layout.addLayout(
-            voting_row
-        )
+        voting_widget = QWidget()
+        voting_layout = QHBoxLayout(voting_widget)
+        voting_layout.setContentsMargins(0, 0, 0, 0)
+        voting_layout.setSpacing(10)
+        voting_layout.addWidget(self.voting)
+        voting_layout.addWidget(voting_hint)
+        voting_layout.addStretch(1)
 
-        cooldown_row = QHBoxLayout()
+        settings_grid.addWidget(voting_label, 1, 0)
+        settings_grid.addWidget(voting_widget, 1, 1)
 
-        cooldown_row.addWidget(
-            QLabel(
-                "Result Cooldown"
-            )
-        )
-
-        cooldown_row.addStretch()
+        cooldown_label = QLabel("Result Cooldown")
+        cooldown_label.setFixedWidth(200)
 
         self.cooldown = QSpinBox()
 
@@ -4368,23 +6018,30 @@ class AdminWindow(QMainWindow):
             2
         )
 
-        cooldown_row.addWidget(
-            self.cooldown
-        )
+        normalize_field(self.cooldown, 110, 40)
+        self.cooldown.setFixedWidth(110)
 
-        cooldown_row.addWidget(
-            QLabel(
-                "seconds"
-            )
-        )
+        cooldown_hint = QLabel("detik")
+        cooldown_hint.setStyleSheet("color:#687083;")
 
-        panel_layout.addLayout(
-            cooldown_row
-        )
+        cooldown_widget = QWidget()
+        cooldown_layout = QHBoxLayout(cooldown_widget)
+        cooldown_layout.setContentsMargins(0, 0, 0, 0)
+        cooldown_layout.setSpacing(10)
+        cooldown_layout.addWidget(self.cooldown)
+        cooldown_layout.addWidget(cooldown_hint)
+        cooldown_layout.addStretch(1)
+
+        settings_grid.addWidget(cooldown_label, 2, 0)
+        settings_grid.addWidget(cooldown_widget, 2, 1)
+
+        settings_grid.setColumnStretch(2, 1)
+        panel_layout.addLayout(settings_grid)
 
         self.liveness = QCheckBox(
             "Liveness detection aktif"
         )
+        self.liveness.setMinimumHeight(36)
 
         self.liveness.setChecked(
             True
@@ -4399,7 +6056,7 @@ class AdminWindow(QMainWindow):
         )
 
         save = QPushButton(
-            "SAVE SETTINGS"
+            "SIMPAN PENGATURAN"
         )
 
         save.setObjectName(
@@ -4429,46 +6086,26 @@ class AdminWindow(QMainWindow):
     # ========================================================
 
     def create_attendance_table(self):
-
         table = QTableWidget()
-
-        table.setColumnCount(
-            5
-        )
-
+        table.setColumnCount(6)
         table.setHorizontalHeaderLabels([
             "NAMA",
             "TANGGAL",
             "JAM",
-            "SCORE",
-            "STATUS"
+            "SKOR",
+            "STATUS",
+            "KETERANGAN",
         ])
-
-        table.verticalHeader().setVisible(
-            False
-        )
-
-        table.setEditTriggers(
-            QAbstractItemView.NoEditTriggers
-        )
-
-        table.setSelectionBehavior(
-            QAbstractItemView.SelectRows
-        )
-
-        table.setShowGrid(
-            False
-        )
-
-        # Improve table visuals & interactivity
+        table.verticalHeader().setVisible(False)
+        table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        table.setShowGrid(False)
         table.setAlternatingRowColors(True)
         table.setSortingEnabled(True)
         table.horizontalHeader().setHighlightSections(False)
-
         table.horizontalHeader().setSectionResizeMode(
             QHeaderView.Stretch
         )
-
         return table
 
     # ========================================================
@@ -4515,105 +6152,333 @@ class AdminWindow(QMainWindow):
     # REFRESH
     # ========================================================
 
-    def refresh_all(self):
+    def auto_mark_unattended_today(self):
+        """
+        Setelah jam kerja selesai (19:00), setiap pengguna aktif yang
+        belum memiliki catatan presensi untuk hari kerja hari ini
+        otomatis diberi status "Tanpa Keterangan".
 
+        Sabtu/Minggu dan hari libur tidak diproses.
+        """
+        now = datetime.now()
+        today = now.date()
+
+        # Hari non-kerja tidak boleh menghasilkan status alpha.
+        if not is_working_day(today):
+            return False
+
+        # Sebelum akhir jam kerja, jangan menandai siapa pun.
+        cutoff = datetime.strptime("19:00", "%H:%M").time()
+        if now.time() < cutoff:
+            return False
+
+        existing_names = {
+            str(row.get("Nama", "")).strip()
+            for row in self.attendance
+            if str(row.get("Tanggal", "")).strip()
+            == today.strftime("%Y-%m-%d")
+            and str(row.get("Nama", "")).strip()
+        }
+
+        missing = [
+            person for person in self.people
+            if str(person.get("Nama", "")).strip()
+            and str(person.get("Status", "Aktif")).strip().lower()
+                in {"aktif", "active", ""}
+            and str(person.get("Nama", "")).strip()
+                not in existing_names
+        ]
+
+        if not missing:
+            return False
+
+        date_text = today.strftime("%Y-%m-%d")
+        changed = False
+
+        try:
+            ensure_attendance_schema()
+            file_exists = ATTENDANCE_FILE.exists()
+
+            with open(
+                ATTENDANCE_FILE,
+                "a",
+                newline="",
+                encoding="utf-8-sig",
+            ) as file:
+                writer = csv.writer(file)
+
+                if not file_exists:
+                    writer.writerow([
+                        "Nama",
+                        "Tanggal",
+                        "Jam",
+                        "Skor",
+                        "Status",
+                        "Keterangan",
+                    ])
+
+                for person in missing:
+                    writer.writerow([
+                        str(person.get("Nama", "")).strip(),
+                        date_text,
+                        "",
+                        "AUTO",
+                        "Tanpa Keterangan",
+                        "",
+                    ])
+                    changed = True
+
+        except Exception as error:
+            print(
+                "[WARNING] Gagal membuat status Tanpa Keterangan otomatis:",
+                error,
+            )
+
+        return changed
+
+    def check_auto_absence(self):
         self.people = load_people()
+        self.attendance = load_attendance()
 
+        if self.auto_mark_unattended_today():
+            self.attendance = load_attendance()
+            self.update_dashboard_cards()
+            self.fill_attendance_table(self.attendance)
+            self.populate_attendance_filters()
+            self.update_monthly_dashboard()
+
+    def refresh_all(self):
+        self.people = load_people()
+        self.attendance = load_attendance()
+
+        # Jalankan setelah data dimuat, lalu reload agar rekap langsung
+        # menampilkan status Tanpa Keterangan yang baru dibuat.
+        if self.auto_mark_unattended_today():
+            self.attendance = load_attendance()
         self.attendance = load_attendance()
 
         self.update_dashboard_cards()
-
         self.fill_attendance_table(
             self.attendance
         )
-
         self.load_people_table()
+        self.populate_attendance_filters()
+        self.populate_report_people()
+        self.update_monthly_dashboard()
+        self.update_report_month_hint()
 
     # ========================================================
     # DASHBOARD CARDS
     # ========================================================
 
+    def populate_month_combo(self, combo):
+        combo.blockSignals(True)
+        combo.clear()
+
+        now = datetime.now()
+        for offset in range(-11, 2):
+            year = now.year
+            month = now.month + offset
+
+            while month <= 0:
+                year -= 1
+                month += 12
+
+            while month > 12:
+                year += 1
+                month -= 12
+
+            label = f"{calendar.month_name[month]} {year}"
+            combo.addItem(label, (year, month))
+
+        # Current month is the last item.
+        combo.setCurrentIndex(combo.count() - 1)
+        combo.blockSignals(False)
+
+    def populate_attendance_filters(self):
+        if not hasattr(self, "attendance_name_filter"):
+            return
+
+        current = self.attendance_name_filter.currentData()
+        self.attendance_name_filter.blockSignals(True)
+        self.attendance_name_filter.clear()
+        self.attendance_name_filter.addItem("Semua orang", None)
+
+        names = sorted({
+            row.get("Nama", "").strip()
+            for row in self.people
+            if row.get("Nama", "").strip()
+        })
+
+        for name in names:
+            self.attendance_name_filter.addItem(name, name)
+
+        if current:
+            index = self.attendance_name_filter.findData(current)
+            if index >= 0:
+                self.attendance_name_filter.setCurrentIndex(index)
+
+        self.attendance_name_filter.blockSignals(False)
+
+    def populate_report_people(self):
+        if not hasattr(self, "report_person"):
+            return
+
+        current = self.report_person.currentData()
+        self.report_person.blockSignals(True)
+        self.report_person.clear()
+        self.report_person.addItem("Semua orang", None)
+
+        for person in sorted(
+            self.people,
+            key=lambda row: row.get("Nama", "").lower()
+        ):
+            name = person.get("Nama", "").strip()
+            if name:
+                self.report_person.addItem(
+                    name,
+                    name,
+                )
+
+        if current:
+            index = self.report_person.findData(current)
+            if index >= 0:
+                self.report_person.setCurrentIndex(index)
+
+        self.report_person.blockSignals(False)
+
     def update_dashboard_cards(self):
-
         while self.cards_layout.count():
-
-            item = (
-                self.cards_layout
-                .takeAt(0)
-            )
-
+            item = self.cards_layout.takeAt(0)
             if item.widget():
-
                 item.widget().deleteLater()
 
-        today = datetime.now().strftime(
-            "%Y-%m-%d"
-        )
-
+        today = datetime.now().strftime("%Y-%m-%d")
         today_rows = [
-            row
-            for row in self.attendance
-            if row["Tanggal"] == today
+            row for row in self.attendance
+            if row.get("Tanggal", "") == today
         ]
 
-        hadir = [
-            row
+        unique_hadir = len({
+            row.get("Nama", "")
             for row in today_rows
-            if row["Status"].lower()
-            == "hadir"
-        ]
+            if attendance_status_is_present(row.get("Status", ""))
+        })
 
-        unique_hadir = len(
-            set(
-                row["Nama"]
-                for row in hadir
-                if row["Nama"]
-            )
-        )
+        izin_today = len({
+            row.get("Nama", "")
+            for row in today_rows
+            if row.get("Status", "").strip().lower() == "izin"
+        })
+
+        sakit_today = len({
+            row.get("Nama", "")
+            for row in today_rows
+            if row.get("Status", "").strip().lower() == "sakit"
+        })
 
         cards = [
-
             create_card(
-                "Total Data",
+                "Total Pengguna",
                 len(self.people),
                 "◉",
                 "All Time"
             ),
-
             create_card(
-                "Total Hari Ini",
-                len(today_rows),
-                "◷",
-                "Today"
-            ),
-
-            create_card(
-                "Total Hadir",
+                "Hadir Hari Ini",
                 unique_hadir,
                 "✓",
-                "Live"
+                "Hari Ini"
             ),
-
+            create_card(
+                "Izin Hari Ini",
+                izin_today,
+                "◷",
+                "Hari Ini"
+            ),
+            create_card(
+                "Sakit Hari Ini",
+                sakit_today,
+                "!",
+                "Hari Ini"
+            ),
         ]
 
         for card in cards:
+            self.cards_layout.addWidget(card)
 
-            self.cards_layout.addWidget(
-                card
-            )
+    def update_monthly_dashboard(self):
+        if not hasattr(self, "dashboard_month"):
+            return
 
-        recent = sorted(
-            self.attendance,
-            key=lambda row: (
-                row["Tanggal"],
-                row["Jam"]
-            ),
-            reverse=True
+        period = self.dashboard_month.currentData()
+        if not period:
+            return
+
+        year, month = period
+        holidays = load_holidays()
+        workdays = working_days_in_month(
+            year, month, holidays
         )
 
-        self.fill_attendance_table(
-            recent[:10],
-            self.dashboard_table
+        self.monthly_table.setRowCount(0)
+
+        for person in sorted(
+            self.people,
+            key=lambda row: row.get("Nama", "").lower()
+        ):
+            name = person.get("Nama", "").strip()
+            if not name:
+                continue
+
+            item = monthly_person_summary(
+                name,
+                year,
+                month,
+                self.attendance,
+                holidays,
+            )
+
+            row_index = self.monthly_table.rowCount()
+            self.monthly_table.insertRow(row_index)
+
+            values = [
+                name,
+                str(item["hadir"]),
+                str(item["izin"]),
+                str(item["sakit"]),
+                str(item["tanpa_keterangan"]),
+                str(item["hari_kerja"]),
+                f"{item['percentage']:.2f}%",
+                (
+                    "100%" if item["percentage"] >= 99.999
+                    else "Berjalan"
+                ),
+            ]
+
+            for col, value in enumerate(values):
+                cell = QTableWidgetItem(value)
+                cell.setTextAlignment(
+                    Qt.AlignCenter
+                    if col > 0
+                    else Qt.AlignLeft | Qt.AlignVCenter
+                )
+                self.monthly_table.setItem(
+                    row_index, col, cell
+                )
+
+        month_name = calendar.month_name[month]
+        holiday_count = sum(
+            1 for date_text in holidays
+            if date_text.startswith(
+                f"{year:04d}-{month:02d}-"
+            )
+        )
+
+        self.dashboard_month_info.setText(
+            f"{month_name} {year} • "
+            f"{workdays} hari kerja • "
+            f"{holiday_count} hari libur"
         )
 
     # ========================================================
@@ -4625,50 +6490,31 @@ class AdminWindow(QMainWindow):
         rows,
         table=None
     ):
-
         if table is None:
-
             table = self.attendance_table
 
-        table.setRowCount(
-            0
-        )
+        table.setRowCount(0)
 
         for row in rows:
-
             index = table.rowCount()
-
-            table.insertRow(
-                index
-            )
+            table.insertRow(index)
 
             values = [
-                row["Nama"],
-                row["Tanggal"],
-                row["Jam"],
-                row["Score"],
-                row["Status"]
+                row.get("Nama", ""),
+                row.get("Tanggal", ""),
+                row.get("Jam", ""),
+                row.get("Skor", ""),
+                row.get("Status", ""),
+                row.get("Keterangan", ""),
             ]
 
-            for column, value in enumerate(
-                values
-            ):
-
-                item = QTableWidgetItem(
-                    value
-                )
-
-                if column >= 2:
-
+            for column, value in enumerate(values):
+                item = QTableWidgetItem(str(value))
+                if column >= 1:
                     item.setTextAlignment(
                         Qt.AlignCenter
                     )
-
-                table.setItem(
-                    index,
-                    column,
-                    item
-                )
+                table.setItem(index, column, item)
 
     # ========================================================
     # PEOPLE TABLE
@@ -4749,7 +6595,7 @@ class AdminWindow(QMainWindow):
             btn_layout.setSpacing(8)
 
             # Smaller, compact buttons so ACTION column doesn't overflow
-            register = QPushButton("REGISTER")
+            register = QPushButton("DAFTAR")
             register.setObjectName("Blue")
             register.setFont(QFont("Segoe UI", 8, QFont.Bold))
             register.setFixedHeight(22)
@@ -4759,7 +6605,7 @@ class AdminWindow(QMainWindow):
                 "QPushButton{ color:#0f1724; background:#eef3ff; border:1px solid rgba(36,81,214,0.08); border-radius:4px; padding:2px 4px; font-size:11px; }"
                 "QPushButton:pressed{ background:#dfe8ff; }"
             )
-            register.setToolTip("REGISTER FACE")
+            register.setToolTip("DAFTAR WAJAH")
             register.clicked.connect(lambda checked=False, p=person: self.register_face(p))
 
             delete = QPushButton("HAPUS")
@@ -5209,52 +7055,65 @@ class AdminWindow(QMainWindow):
     # ========================================================
 
     def apply_attendance_filter(self):
-
-        date = (
-            self.attendance_date_filter
-            .text()
-            .strip()
-        )
-
-        name = (
-            self.attendance_name_filter
-            .text()
-            .strip()
-            .lower()
-        )
-
-        result = []
-
-        for row in self.attendance:
-
-            date_ok = (
-                not date
-                or row["Tanggal"] == date
+        date = None
+        if not self.attendance_date_all.isChecked():
+            date = (
+                self.attendance_date_filter
+                .date()
+                .toPython()
+                .strftime("%Y-%m-%d")
             )
 
+        name = self.attendance_name_filter.currentData()
+
+        result = []
+        for row in self.attendance:
+            date_ok = (
+                date is None
+                or row.get("Tanggal", "") == date
+            )
             name_ok = (
-                not name
-                or name in row["Nama"].lower()
+                name is None
+                or row.get("Nama", "") == name
             )
 
             if date_ok and name_ok:
+                result.append(row)
 
-                result.append(
-                    row
-                )
-
-        self.fill_attendance_table(
-            result
-        )
+        self.fill_attendance_table(result)
 
     def reset_attendance_filter(self):
+        self.attendance_date_all.setChecked(True)
+        self.attendance_date_filter.setDate(QDate.currentDate())
+        self.attendance_name_filter.setCurrentIndex(0)
+        self.fill_attendance_table(self.attendance)
 
-        self.attendance_date_filter.clear()
+    def open_holiday_manager(self):
+        dialog = HolidayDialog(self)
+        dialog.exec()
+        self.update_monthly_dashboard()
+        self.update_report_month_hint()
 
-        self.attendance_name_filter.clear()
+    def update_report_month_hint(self):
+        if not hasattr(self, "report_month"):
+            return
 
-        self.fill_attendance_table(
-            self.attendance
+        period = self.report_month.currentData()
+        if not period:
+            return
+
+        year, month = period
+        holidays = load_holidays()
+        workdays = working_days_in_month(
+            year, month, holidays
+        )
+
+        self.report_hint.setText(
+            f"Periode: {calendar.month_name[month]} {year} • "
+            f"Hari kerja: {workdays}. "
+            "Persentase bulanan = hari hadir / total hari kerja "
+            "Senin-Jumat dalam bulan tersebut, setelah dikurangi "
+            "hari libur yang didaftarkan."
         )
 
     # ========================================================
@@ -5265,40 +7124,38 @@ class AdminWindow(QMainWindow):
         self,
         text
     ):
+        """
+        Pencarian global diarahkan ke halaman Riwayat Presensi.
+        Dashboard tidak lagi memiliki tabel "Absensi Terbaru".
+        """
+        query = text.strip().lower()
 
-        query = (
-            text
-            .strip()
-            .lower()
-        )
+        if not hasattr(self, "stack"):
+            return
+
+        self.stack.setCurrentIndex(2)
 
         if not query:
-
             self.fill_attendance_table(
-                self.attendance[:10],
-                self.dashboard_table
+                self.attendance,
+                self.attendance_table
             )
-
             return
 
         result = []
-
         for row in self.attendance:
-
             joined = " ".join(
-                row.values()
+                str(value) for value in row.values()
             ).lower()
 
             if query in joined:
-
-                result.append(
-                    row
-                )
+                result.append(row)
 
         self.fill_attendance_table(
-            result[:20],
-            self.dashboard_table
+            result,
+            self.attendance_table
         )
+
 
     # ========================================================
     # SETTINGS
@@ -5325,7 +7182,7 @@ class AdminWindow(QMainWindow):
                 )
 
                 writer.writerow([
-                    "RecognitionThreshold",
+                    "AmbangPengenalan",
                     "Voting",
                     "Cooldown",
                     "Liveness"
@@ -5342,7 +7199,7 @@ class AdminWindow(QMainWindow):
 
             QMessageBox.information(
                 self,
-                "Settings",
+                "Pengaturan",
                 (
                     "Pengaturan berhasil disimpan.\n\n"
                     "Catatan: register_face.py/main.py "
@@ -5363,120 +7220,108 @@ class AdminWindow(QMainWindow):
     # EXPORT PDF
     # ========================================================
 
-    def export_pdf(self):
-
+    def export_pdf(self, monthly=False):
         try:
-
             from reportlab.lib import colors
-
             from reportlab.lib.pagesizes import A4
-
-            from reportlab.lib.styles import (
-                getSampleStyleSheet
-            )
-
+            from reportlab.lib.styles import getSampleStyleSheet
             from reportlab.lib.units import mm
-
             from reportlab.platypus import (
                 SimpleDocTemplate,
                 Paragraph,
                 Spacer,
                 Table,
-                TableStyle
+                TableStyle,
             )
-
         except ImportError:
-
             QMessageBox.critical(
                 self,
                 "ReportLab Belum Terinstall",
-                (
-                    "Install dengan:\n\n"
-                    "pip install reportlab"
-                )
+                "Install dengan:\n\npip install reportlab",
             )
-
             return
 
-        date = ""
+        name = (
+            self.report_person.currentData()
+            if hasattr(self, "report_person")
+            else None
+        )
 
-        name = ""
+        period = (
+            self.report_month.currentData()
+            if hasattr(self, "report_month")
+            else None
+        )
 
-        if hasattr(
-            self,
-            "report_date"
-        ):
+        if not period:
+            now = datetime.now()
+            period = (now.year, now.month)
 
-            date = (
-                self.report_date
-                .text()
-                .strip()
-            )
-
-        if hasattr(
-            self,
-            "report_person"
-        ):
-
-            name = (
-                self.report_person
-                .text()
-                .strip()
-                .lower()
-            )
+        year, month = period
+        holidays = load_holidays()
 
         rows = []
 
-        for row in self.attendance:
-
-            if date:
-
-                if row["Tanggal"] != date:
-
+        if monthly:
+            prefix = f"{year:04d}-{month:02d}-"
+            for row in self.attendance:
+                if not row.get("Tanggal", "").startswith(prefix):
                     continue
-
-            if name:
-
-                if name not in row["Nama"].lower():
-
+                if name and row.get("Nama", "") != name:
                     continue
+                rows.append(row)
+        else:
+            date_text = None
+            if hasattr(self, "report_all_dates"):
+                if not self.report_all_dates.isChecked():
+                    date_text = (
+                        self.report_date
+                        .date()
+                        .toPython()
+                        .strftime("%Y-%m-%d")
+                    )
 
-            rows.append(
-                row
-            )
+            for row in self.attendance:
+                if date_text and row.get("Tanggal", "") != date_text:
+                    continue
+                if name and row.get("Nama", "") != name:
+                    continue
+                rows.append(row)
 
-        if not rows:
-
+        if monthly:
+            if not rows and name:
+                # A monthly report can still be useful even with no rows.
+                pass
+        elif not rows:
             QMessageBox.information(
                 self,
                 "Tidak Ada Data",
-                "Tidak ada data attendance untuk filter tersebut."
+                "Tidak ada data attendance untuk filter tersebut.",
             )
-
             return
 
-        REPORT_DIR.mkdir(
-            parents=True,
-            exist_ok=True
+        REPORT_DIR.mkdir(parents=True, exist_ok=True)
+
+        suffix_name = (
+            re.sub(r"[^a-zA-Z0-9_-]+", "_", name)
+            if name
+            else "semua_orang"
         )
 
-        filename = (
-            "scanly_attendance_"
-            + datetime.now().strftime(
-                "%Y%m%d_%H%M%S"
+        if monthly:
+            filename = (
+                f"scanly_bulanan_{year:04d}_{month:02d}_"
+                f"{suffix_name}_{datetime.now():%Y%m%d_%H%M%S}.pdf"
             )
-            + ".pdf"
-        )
+        else:
+            filename = (
+                f"scanly_harian_{suffix_name}_"
+                f"{datetime.now():%Y%m%d_%H%M%S}.pdf"
+            )
 
-        output = (
-            REPORT_DIR
-            / filename
-        )
+        output = REPORT_DIR / filename
 
-        styles = (
-            getSampleStyleSheet()
-        )
-
+        styles = getSampleStyleSheet()
         document = SimpleDocTemplate(
             str(output),
             pagesize=A4,
@@ -5484,104 +7329,183 @@ class AdminWindow(QMainWindow):
             rightMargin=15 * mm,
             topMargin=15 * mm,
             bottomMargin=15 * mm,
-            title="Scanly Attendance Report"
+            title="Laporan Presensi Scanly",
         )
 
-        story = []
-
-        story.append(
+        story = [
+            Paragraph("<b>SCANLY</b>", styles["Title"]),
             Paragraph(
-                "<b>SCANLY</b>",
-                styles["Title"]
-            )
-        )
-
-        story.append(
-            Paragraph(
-                "Attendance Report",
-                styles["Heading2"]
-            )
-        )
-
-        story.append(
-            Spacer(
-                1,
-                4 * mm
-            )
-        )
-
-        story.append(
-            Paragraph(
-                "Generated: "
-                + datetime.now().strftime(
-                    "%d-%m-%Y %H:%M:%S"
+                (
+                    "Laporan Presensi Bulanan"
+                    if monthly
+                    else "Laporan Presensi"
                 ),
-                styles["Normal"]
-            )
-        )
+                styles["Heading2"],
+            ),
+            Spacer(1, 4 * mm),
+        ]
 
-        story.append(
-            Paragraph(
-                "Date filter: "
-                + (
-                    date
-                    if date
-                    else "All dates"
-                ),
-                styles["Normal"]
+        if monthly:
+            month_label = f"{calendar.month_name[month]} {year}"
+            workdays = working_days_in_month(
+                year, month, holidays
             )
-        )
 
-        story.append(
-            Paragraph(
-                "Name filter: "
-                + (
-                    name
-                    if name
-                    else "All people"
-                ),
-                styles["Normal"]
+            story.append(
+                Paragraph(
+                    f"Periode: <b>{month_label}</b>",
+                    styles["Normal"],
+                )
             )
-        )
-
-        story.append(
-            Spacer(
-                1,
-                6 * mm
+            story.append(
+                Paragraph(
+                    f"Hari kerja: <b>{workdays}</b> "
+                    "(Senin-Jumat dikurangi hari libur)",
+                    styles["Normal"],
+                )
             )
-        )
 
-        table_data = [
-            [
+            if name:
+                summary = monthly_person_summary(
+                    name,
+                    year,
+                    month,
+                    self.attendance,
+                    holidays,
+                )
+                story.append(
+                    Paragraph(
+                        (
+                            f"Nama: <b>{name}</b> &nbsp;&nbsp; "
+                            f"Kehadiran: <b>"
+                            f"{summary['percentage']:.2f}%</b> &nbsp;&nbsp; "
+                            f"Hadir: {summary['hadir']} &nbsp;&nbsp; "
+                            f"Izin: {summary['izin']} &nbsp;&nbsp; "
+                            f"Sakit: {summary['sakit']} &nbsp;&nbsp; "
+                            f"Tanpa Keterangan: "
+                            f"{summary['tanpa_keterangan']}"
+                        ),
+                        styles["Normal"],
+                    )
+                )
+            else:
+                story.append(
+                    Paragraph(
+                        "Nama: <b>Semua orang</b>",
+                        styles["Normal"],
+                    )
+                )
+
+            story.append(Spacer(1, 5 * mm))
+
+            table_data = [[
+                "Nama",
+                "Hadir",
+                "Izin",
+                "Sakit",
+                "Tanpa Ket.",
+                "Hari Kerja",
+                "Kehadiran",
+            ]]
+
+            people = (
+                [p for p in self.people if p.get("Nama") == name]
+                if name
+                else self.people
+            )
+
+            for person in sorted(
+                people,
+                key=lambda p: p.get("Nama", "").lower()
+            ):
+                person_name = person.get("Nama", "").strip()
+                if not person_name:
+                    continue
+
+                summary = monthly_person_summary(
+                    person_name,
+                    year,
+                    month,
+                    self.attendance,
+                    holidays,
+                )
+
+                table_data.append([
+                    person_name,
+                    str(summary["hadir"]),
+                    str(summary["izin"]),
+                    str(summary["sakit"]),
+                    str(summary["tanpa_keterangan"]),
+                    str(summary["hari_kerja"]),
+                    f"{summary['percentage']:.2f}%",
+                ])
+
+            table = Table(
+                table_data,
+                repeatRows=1,
+                colWidths=[
+                    42 * mm,
+                    17 * mm,
+                    17 * mm,
+                    17 * mm,
+                    28 * mm,
+                    22 * mm,
+                    25 * mm,
+                ],
+            )
+        else:
+            date_filter = (
+                "Semua tanggal"
+                if getattr(self, "report_all_dates", None)
+                and self.report_all_dates.isChecked()
+                else self.report_date.date().toPython().strftime("%Y-%m-%d")
+            )
+
+            story.append(
+                Paragraph(
+                    f"Tanggal: <b>{date_filter}</b>",
+                    styles["Normal"],
+                )
+            )
+            story.append(
+                Paragraph(
+                    f"Nama: <b>{name or 'Semua orang'}</b>",
+                    styles["Normal"],
+                )
+            )
+            story.append(Spacer(1, 5 * mm))
+
+            table_data = [[
                 "Nama",
                 "Tanggal",
                 "Jam",
-                "Score",
-                "Status"
-            ]
-        ]
+                "Skor",
+                "Status",
+                "Keterangan",
+            ]]
 
-        for row in rows:
+            for row in rows:
+                table_data.append([
+                    row.get("Nama", ""),
+                    row.get("Tanggal", ""),
+                    row.get("Jam", ""),
+                    row.get("Skor", ""),
+                    row.get("Status", ""),
+                    row.get("Keterangan", ""),
+                ])
 
-            table_data.append([
-                row["Nama"],
-                row["Tanggal"],
-                row["Jam"],
-                row["Score"],
-                row["Status"]
-            ])
-
-        table = Table(
-            table_data,
-            repeatRows=1,
-            colWidths=[
-                50 * mm,
-                30 * mm,
-                28 * mm,
-                25 * mm,
-                25 * mm
-            ]
-        )
+            table = Table(
+                table_data,
+                repeatRows=1,
+                colWidths=[
+                    38 * mm,
+                    28 * mm,
+                    24 * mm,
+                    22 * mm,
+                    30 * mm,
+                    38 * mm,
+                ],
+            )
 
         table.setStyle(
             TableStyle([
@@ -5589,88 +7513,105 @@ class AdminWindow(QMainWindow):
                     "BACKGROUND",
                     (0, 0),
                     (-1, 0),
-                    colors.HexColor(
-                        "#eef0f3"
-                    )
+                    colors.HexColor("#eef0f3"),
                 ),
-
                 (
                     "FONTNAME",
                     (0, 0),
                     (-1, 0),
-                    "Helvetica-Bold"
+                    "Helvetica-Bold",
                 ),
-
                 (
                     "GRID",
                     (0, 0),
                     (-1, -1),
                     0.4,
-                    colors.HexColor(
-                        "#d5d9df"
-                    )
+                    colors.HexColor("#d5d9df"),
                 ),
-
                 (
                     "FONTSIZE",
                     (0, 0),
                     (-1, -1),
-                    8
+                    8,
                 ),
-
                 (
                     "TOPPADDING",
                     (0, 0),
                     (-1, -1),
-                    6
+                    5,
                 ),
-
                 (
                     "BOTTOMPADDING",
                     (0, 0),
                     (-1, -1),
-                    6
+                    5,
                 ),
-
                 (
                     "ALIGN",
                     (1, 1),
                     (-1, -1),
-                    "CENTER"
+                    "CENTER",
                 ),
             ])
         )
 
-        story.append(
-            table
-        )
-
-        story.append(
-            Spacer(
-                1,
-                6 * mm
-            )
-        )
-
+        story.append(table)
+        story.append(Spacer(1, 5 * mm))
         story.append(
             Paragraph(
-                f"<b>Total records:</b> {len(rows)}",
-                styles["Normal"]
+                (
+                    f"Generated: "
+                    f"{datetime.now():%d-%m-%Y %H:%M:%S} • "
+                    f"Total data: {len(rows)}"
+                ),
+                styles["Normal"],
             )
         )
 
-        document.build(
-            story
-        )
+        try:
+            document.build(story)
+        except Exception as error:
+            QMessageBox.critical(
+                self,
+                "Gagal Mengekspor PDF",
+                str(error),
+            )
+            return
 
         QMessageBox.information(
             self,
-            "Export Berhasil",
-            (
-                "PDF berhasil dibuat:\n\n"
-                f"{output}"
-            )
+            "Ekspor Berhasil",
+            f"PDF berhasil dibuat:\n\n{output}",
         )
+
+    # ========================================================
+    # KELUAR DARI ADMIN
+    # ========================================================
+
+    def logout(self):
+        reply = QMessageBox.question(
+            self,
+            "Keluar",
+            "Yakin ingin keluar dari dashboard admin?",
+            QMessageBox.Yes | QMessageBox.No,
+        )
+
+        if reply != QMessageBox.Yes:
+            return
+
+        self._logging_out = True
+        self.close()
+
+        login = LoginDialog()
+
+        if login.exec() == QDialog.Accepted:
+            new_window = AdminWindow()
+            new_window.show()
+
+            # Keep a Python reference so the new window remains alive.
+            self._replacement_window = new_window
+        else:
+            QApplication.instance().quit()
 
     # ========================================================
     # CLOSE

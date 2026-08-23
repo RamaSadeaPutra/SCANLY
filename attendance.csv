@@ -1,35 +1,55 @@
-﻿Nama,Tanggal,Jam,Score,Status
-Rama Sadea Putra As,2026-08-12,21:07:51,52.22,Hadir
-Rama Sadea Putra As,2026-08-12,21:14:05,52.10,Hadir
-Rama Sadea Putra As,2026-08-12,21:14:58,52.20,Hadir
-Rama Sadea Putra As,2026-08-12,21:15:46,41.30,Hadir
-Rama Sadea Putra As,2026-08-12,21:15:52,43.77,Hadir
-Rama Sadea Putra As,2026-08-12,21:15:57,42.31,Hadir
-Rama Sadea Putra As,2026-08-12,21:22:16,44.28,Hadir
-Rama Sadea Putra As,2026-08-12,21:22:37,51.91,Hadir
-Rama Sadea Putra As,2026-08-12,21:24:20,46.30,Hadir
-Rama Sadea Putra As,2026-08-12,21:25:07,46.00,Hadir
-Rama Sadea Putra As,2026-08-13,09:05:08,75.26,Hadir
-RamonTanque,2026-08-16,22:17:19,89.32,Hadir
-RamonTanque,2026-08-17,08:22:05,79.80,Tepat Waktu
-RamonTanque,2026-08-17,16:22:45,80.52,Pulang
-RamonTanque,2026-08-18,13:23:56,82.48,Terlambat
-Rama Sadea Putra,2026-08-20,14:36:30,Manual,Terlambat
-Rama Sadea Putra,2026-08-19,08:20:42,Manual,Tepat Waktu
-01TES,2026-08-19,08:23:03,89.42,Tepat Waktu
-RamonTanque,2026-08-19,08:48:24,89.59,Terlambat
-03TES,2026-08-19,08:51:23,85.47,Terlambat
-bunda,2026-08-19,09:55:51,59.73,Terlambat
-om,2026-08-19,09:58:56,51.52,Terlambat
-Ramasadea,2026-08-19,10:34:41,42.68,Terlambat
-zzzaa,2026-08-19,10:37:56,42.34,Terlambat
-raama,2026-08-19,10:47:52,40.06,Terlambat
-adaa,2026-08-19,10:58:40,38.75,Terlambat
-saas,2026-08-19,11:06:44,38.53,Terlambat
-asoy,2026-08-19,11:09:45,33.46,Terlambat
-yyy,2026-08-19,11:12:39,67.29,Terlambat
-sssss,2026-08-19,11:14:57,40.28,Terlambat
-sss,2026-08-19,11:16:01,57.06,Terlambat
-ssssss,2026-08-19,11:22:10,28.99,Terlambat
-rrrrr,2026-08-19,11:23:52,53.66,Terlambat
-ramasadea,2026-08-19,11:46:47,40.97,Terlambat
+﻿Nama,Tanggal,Jam,Skor,Status,Keterangan
+Rama Sadea Putra As,2026-08-12,21:07:51,,Hadir,
+Rama Sadea Putra As,2026-08-12,21:14:05,,Hadir,
+Rama Sadea Putra As,2026-08-12,21:14:58,,Hadir,
+Rama Sadea Putra As,2026-08-12,21:15:46,,Hadir,
+Rama Sadea Putra As,2026-08-12,21:15:52,,Hadir,
+Rama Sadea Putra As,2026-08-12,21:15:57,,Hadir,
+Rama Sadea Putra As,2026-08-12,21:22:16,,Hadir,
+Rama Sadea Putra As,2026-08-12,21:22:37,,Hadir,
+Rama Sadea Putra As,2026-08-12,21:24:20,,Hadir,
+Rama Sadea Putra As,2026-08-12,21:25:07,,Hadir,
+Rama Sadea Putra As,2026-08-13,09:05:08,,Hadir,
+RamonTanque,2026-08-16,22:17:19,,Hadir,
+RamonTanque,2026-08-17,08:22:05,,Tepat Waktu,
+RamonTanque,2026-08-17,16:22:45,,Pulang,
+RamonTanque,2026-08-18,13:23:56,,Terlambat,
+Rama Sadea Putra,2026-08-20,14:36:30,,Terlambat,
+Rama Sadea Putra,2026-08-19,08:20:42,,Tepat Waktu,
+01TES,2026-08-19,08:23:03,,Tepat Waktu,
+RamonTanque,2026-08-19,08:48:24,,Terlambat,
+03TES,2026-08-19,08:51:23,,Terlambat,
+bunda,2026-08-19,09:55:51,,Terlambat,
+om,2026-08-19,09:58:56,,Terlambat,
+Ramasadea,2026-08-19,10:34:41,,Terlambat,
+zzzaa,2026-08-19,10:37:56,,Terlambat,
+raama,2026-08-19,10:47:52,,Terlambat,
+adaa,2026-08-19,10:58:40,,Terlambat,
+saas,2026-08-19,11:06:44,,Terlambat,
+asoy,2026-08-19,11:09:45,,Terlambat,
+yyy,2026-08-19,11:12:39,,Terlambat,
+sssss,2026-08-19,11:14:57,,Terlambat,
+sss,2026-08-19,11:16:01,,Terlambat,
+ssssss,2026-08-19,11:22:10,,Terlambat,
+rrrrr,2026-08-19,11:23:52,,Terlambat,
+ramasadea,2026-08-19,11:46:47,,Terlambat,
+rama,2026-08-20,08:16:11,,Tepat Waktu,
+rama,2026-08-20,16:16:59,,Pulang,
+rama,2026-08-21,09:46:28,,Terlambat,
+rehan,2026-08-22,08:16:55,,Tepat Waktu,
+rama,2026-08-22,08:18:26,,Tepat Waktu,
+Risna,2026-08-22,08:23:41,,Tepat Waktu,
+rama,2026-08-19,14:47:24,,Terlambat,
+rehan,2026-08-19,22:41:55,,Hadir,
+Risna,2026-08-19,22:42:12,,Hadir,aaSass
+galang,2026-08-19,22:43:36,,Hadir,
+galang,2026-08-20,,,Tanpa Keterangan,
+Risna,2026-08-20,,,Tanpa Keterangan,
+po,2026-08-20,,,Tanpa Keterangan,
+dasasds,2026-08-20,,,Tanpa Keterangan,
+adsads,2026-08-20,,,Tanpa Keterangan,
+dassa,2026-08-20,19:12:44,Manual,Hadir,
+rehan,2026-08-20,19:25:41,Manual,Hadir,
+sda,2026-08-20,08:25:43,Manual,Hadir,
+rama,2026-08-23,09:24:36,Manual,Terlambat,
+rama,2026-08-23,16:29:26,0.69,Pulang
